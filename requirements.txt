@@ -1,5 +1,6 @@
 # Core framework
 fastapi==0.110.0
+starlette==0.36.3
 uvicorn[standard]==0.29.0
 python-dotenv==1.0.1
 passlib[bcrypt]==1.7.4
