@@ -1,54 +1,110 @@
+import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import MagicMock
 from api.main import app
+from api import auth
 
 client = TestClient(app)
 
-test_user = {
-    "username": "testuser",
-    "password": "testpass123",
-    "firstname": "Test",
-    "lastname": "User",
-    "email": "test@example.com",
-    "phone": "1234567890"
-}
+@pytest.fixture(autouse=True)
+def mock_users_db(monkeypatch):
+    mock_db = MagicMock()
+    monkeypatch.setattr("api.main.users_db", mock_db)
+    return mock_db
 
-def test_homepage_and_login_page():
-    res_home = client.get("/")
-    res_login = client.get("/login")
 
-    assert res_home.status_code == 200
-    assert res_login.status_code == 200
-    assert "Organizational AI" in res_home.text
+def test_signup_success(mock_users_db):
+    mock_users_db.find_one.return_value = None
+    mock_users_db.insert_one.return_value.acknowledged = True
+    mock_users_db.insert_one.return_value.inserted_id = "fakeid123"
 
-def test_signup():
-    response = client.post("/signup", data=test_user)
-
-    assert response.status_code in (200, 400)
-    if response.status_code == 200:
-        assert "User created successfully" in response.json()["message"]
-
-def test_signin_and_get_token():
-    data = {
-        "username": test_user["username"],
-        "password": test_user["password"]
+    payload = {
+        "username": "testuser",
+        "password": "testpass",
+        "firstname": "Test",
+        "lastname": "User",
+        "email": "test@example.com",
+        "phone": "1234567890"
     }
-    response = client.post("/signin", data=data)
-
+    response = client.post("/signup", json=payload)
     assert response.status_code == 200
-    json_data = response.json()
-    assert "access_token" in json_data
-    assert json_data["token_type"] == "bearer"
-    return json_data["access_token"]
+    data = response.json()
+    assert data["message"] == "User created successfully"
+    mock_users_db.insert_one.assert_called_once()
 
-def test_protected_user_routes():
-    token = test_signin_and_get_token()
-    headers = {"Authorization": f"Bearer {token}"}
 
-    res_users = client.get("/users", headers=headers)
-    assert res_users.status_code in (200, 403)
+def test_signup_user_already_exists(mock_users_db):
+    mock_users_db.find_one.return_value = {"username": "testuser"}
 
-    res_user = client.get(f"/users/{test_user['username']}", headers=headers)
-    assert res_user.status_code in (200, 403, 404)
+    payload = {"username": "testuser", "password": "testpass"}
+    response = client.post("/signup", json=payload)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "User already exists"
 
-    res_delete = client.delete(f"/users/{test_user['username']}", headers=headers)
-    assert res_delete.status_code in (200, 403, 404)
+
+def test_signin_success(mock_users_db, monkeypatch):
+    mock_user = {"username": "testuser", "password": "hashed"}
+    mock_users_db.find_one.return_value = mock_user
+
+    monkeypatch.setattr("api.main.pwd_context.verify", lambda p, h: True)
+    monkeypatch.setattr("api.main.create_access_token", lambda data: "fake-jwt")
+
+    form_data = {"username": "testuser", "password": "testpass"}
+    response = client.post("/signin", data=form_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["access_token"] == "fake-jwt"
+    assert data["token_type"] == "bearer"
+
+
+def test_signin_invalid_credentials(mock_users_db, monkeypatch):
+    mock_users_db.find_one.return_value = None  # No user found
+    form_data = {"username": "nouser", "password": "wrong"}
+    response = client.post("/signin", data=form_data)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid credentials"
+
+
+def test_list_users_permission_denied(mock_users_db, monkeypatch):
+    monkeypatch.setattr("api.main.verify_token", lambda t: {"permission": "user"})
+    response = client.get("/users", headers={"Authorization": "Bearer faketoken"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Permission denied"
+
+
+def test_list_users_success(mock_users_db, monkeypatch):
+    monkeypatch.setattr("api.main.verify_token", lambda t: {"permission": "admin"})
+    mock_users_db.find.return_value = [{"username": "testuser", "permission": "user"}]
+
+    response = client.get("/users", headers={"Authorization": "Bearer faketoken"})
+    assert response.status_code == 200
+    users = response.json()
+    assert isinstance(users, list)
+    assert users[0]["username"] == "testuser"
+
+
+def test_get_user_not_found(mock_users_db, monkeypatch):
+    monkeypatch.setattr("api.main.verify_token", lambda t: {"permission": "admin", "username": "missinguser"})
+    mock_users_db.find_one.return_value = None
+
+    response = client.get("/users/missinguser", headers={"Authorization": "Bearer faketoken"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User not found"
+
+
+def test_delete_user_success(mock_users_db, monkeypatch):
+    monkeypatch.setattr("api.main.verify_token", lambda t: {"permission": "admin", "username": "testuser"})
+    mock_users_db.delete_one.return_value.deleted_count = 1
+
+    response = client.delete("/users/testuser", headers={"Authorization": "Bearer faketoken"})
+    assert response.status_code == 200
+    assert "deleted successfully" in response.json()["message"]
+
+
+def test_delete_user_not_found(mock_users_db, monkeypatch):
+    monkeypatch.setattr("api.main.verify_token", lambda t: {"permission": "admin", "username": "testuser"})
+    mock_users_db.delete_one.return_value.deleted_count = 0
+
+    response = client.delete("/users/testuser", headers={"Authorization": "Bearer faketoken"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User not found"

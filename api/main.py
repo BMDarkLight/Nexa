@@ -73,7 +73,7 @@ def login():
     return """
     <html>
         <head>
-            <title>Peyvand AI</title>
+            <title>Organizational AI API</title>
             <meta charset="UTF-8" />
         </head>
         <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; padding: 20px;">
@@ -132,10 +132,15 @@ def login():
 
                 const response = await fetch("/signup", {
                     method: "POST",
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded"
-                    },
-                    body: formData
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password,
+                        firstname: "",
+                        lastname: "",
+                        email: "",
+                        phone: ""
+                    })
                 });
 
                 const result = await response.json();
@@ -149,8 +154,20 @@ def login():
 # --- Authentication Routes ---
 from api.auth import create_access_token, verify_token, users_db
 import datetime
+
+from pydantic import BaseModel
+
+class SignupModel(BaseModel):
+    username: str
+    password: str
+    firstname: str = ""
+    lastname: str = ""
+    email: str = ""
+    phone: str = ""
+
 @app.post("/signup")
-def signup(form_data: OAuth2PasswordRequestForm = Depends()):
+@app.post("/signup")
+def signup(form_data: SignupModel):
     if users_db.find_one({"username": form_data.username}):
         raise HTTPException(status_code=400, detail="User already exists")
     
@@ -159,12 +176,12 @@ def signup(form_data: OAuth2PasswordRequestForm = Depends()):
     result = users_db.insert_one({
         "username": form_data.username,
         "password": hashed_password,
-        "firstname": form_data.firstname or "",
-        "lastname": form_data.lastname or "",
-        "email": form_data.email or "",
-        "phone": form_data.phone or "",
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "firstname": form_data.firstname,
+        "lastname": form_data.lastname,
+        "email": form_data.email,
+        "phone": form_data.phone,
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow(),
         "permission": "user"
     })
 
