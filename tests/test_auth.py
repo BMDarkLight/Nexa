@@ -2,7 +2,6 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock
 from api.main import app
-from api import auth
 
 client = TestClient(app)
 
@@ -58,7 +57,7 @@ def test_signin_success(mock_users_db, monkeypatch):
 
 
 def test_signin_invalid_credentials(mock_users_db, monkeypatch):
-    mock_users_db.find_one.return_value = None  # No user found
+    mock_users_db.find_one.return_value = None 
     form_data = {"username": "nouser", "password": "wrong"}
     response = client.post("/signin", data=form_data)
     assert response.status_code == 401

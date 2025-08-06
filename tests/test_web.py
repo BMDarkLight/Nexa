@@ -8,7 +8,6 @@ SERVER_PROCESS = None
 
 @pytest.fixture(scope="session", autouse=True)
 def build_and_start_nextjs():
-    # Build Next.js app first
     subprocess.run(["npm", "install"], cwd="web", check=True)
     subprocess.run(["npm", "run", "build"], cwd="web", check=True)
 

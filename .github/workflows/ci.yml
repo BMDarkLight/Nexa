@@ -4,30 +4,77 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
-  test-and-build:
+  test:
     runs-on: ubuntu-latest
 
-    env:
-      PYTHONPATH: .
+    services:
+      mongodb:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'" 
+          --health-interval 10s 
+          --health-timeout 5s 
+          --health-retries 5
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
 
-      - name: Run tests
-        run: pytest
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ./web/package-lock.json
 
-      - name: Build Docker image
-        run: docker build -t org-ai .
+      - name: Install Node.js dependencies
+        run: |
+          cd web
+          npm ci
+
+      - name: Build Next.js app
+        run: |
+          cd web
+          npm run build
+
+      - name: Start FastAPI server
+        run: |
+          uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+        env:
+          MONGODB_URI: "mongodb://localhost:27017/testdb"
+
+      - name: Start Next.js server
+        run: |
+          cd web
+          npm run start -- --port 3000 &
+        env:
+          NODE_ENV: production
+
+      - name: Wait for servers to be ready
+        run: |
+          echo "Waiting for FastAPI on :8000..."
+          for i in {1..30}; do nc -z localhost 8000 && break; sleep 1; done
+          echo "Waiting for Next.js on :3000..."
+          for i in {1..30}; do nc -z localhost 3000 && break; sleep 1; done
+
+      - name: Run pytest
+        env:
+          MONGODB_URI: "mongodb://localhost:27017/testdb"
+        run: |
+          PYTHONPATH=. pytest -v
