@@ -428,14 +428,17 @@ def invite_signin(
 
     result = prospective_users_db.update_one(
         {"username": username},
-        {"$set": {
-            "password": hashed_password,
-            "firstname": prospective_user.get("firstname", ""),
-            "lastname": prospective_user.get("lastname", ""),
-            "email": prospective_user.get("email", ""),
-            "phone": prospective_user.get("phone", ""),
-            "updated_at": datetime.datetime.utcnow()
-        }}
+        {
+            "$set": {
+                "password": hashed_password,
+                "firstname": prospective_user.get("firstname", ""),
+                "lastname": prospective_user.get("lastname", ""),
+                "email": prospective_user.get("email", ""),
+                "phone": prospective_user.get("phone", ""),
+                "updated_at": datetime.datetime.utcnow()
+            },
+            "$unset": {"invite_code": ""}
+        }
     )
 
     if result.modified_count == 0:
