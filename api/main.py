@@ -277,7 +277,10 @@ def approve_signup(username: str, token: str = Depends(oauth2_scheme)):
     user_id = result.inserted_id
     orgs_db.update_one(
         {"_id": prospective_user["organization"]},
-        {"$addToSet": {"users": user_id}}
+        {
+            "$set": {"owner": user_id},
+            "$addToSet": {"users": user_id}
+        }
     )
     if not result.acknowledged:
         raise HTTPException(status_code=500, detail="User creation failed")
