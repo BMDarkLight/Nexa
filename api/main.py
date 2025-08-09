@@ -130,6 +130,8 @@ class SignupModel(BaseModel):
     lastname: str = ""
     email: str = ""
     phone: str = ""
+    organization: str
+    plan: str = "free"
 
 @app.post("/signup")
 def signup(form_data: SignupModel):
@@ -171,7 +173,7 @@ def signup(form_data: SignupModel):
     if not result_org.acknowledged:
         raise HTTPException(status_code=500, detail="Organization creation failed")
     
-    return {"message": "User created successfully", "_id": str(result.inserted_id)}
+    return {"message": "User successfully registered in prospect list", "_id": str(result.inserted_id)}
 
 @app.post("/signin")
 def signin(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -185,7 +187,17 @@ def signin(form_data: OAuth2PasswordRequestForm = Depends()):
 
 # --- Prospective Users Routes ---
 @app.post("/signup/approve/{username}")
-def approve_signup(username: str):
+def approve_signup(username: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
     prospective_user = prospective_users_db.find_one({"username": username})
     if not prospective_user:
         raise HTTPException(status_code=404, detail="Prospective user not found")
@@ -216,7 +228,17 @@ def approve_signup(username: str):
     return {"message": "User approved and created successfully", "_id": str(result.inserted_id)}
 
 @app.post("/signup/reject/{username}")
-def reject_signup(username: str):
+def reject_signup(username: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
     prospective_user = prospective_users_db.find_one({"username": username})
     if not prospective_user:
         raise HTTPException(status_code=404, detail="Prospective user not found")
@@ -271,10 +293,14 @@ def list_users(token: str = Depends(oauth2_scheme)):
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     
-    if user.get("permission") != "admin":
+    if user.get("permission") == "sysadmin":
+        query = {}
+    elif user.get("permission") == "orgadmin":
+        query = {"organization": user.get("organization")}
+    else:
         raise HTTPException(status_code=403, detail="Permission denied")
-    
-    users = list(users_db.find({"organization" : user.get("organization")}, {"_id": 0, "password": 0}))
+
+    users = list(users_db.find(query, {"_id": 0, "password": 0}))
 
     return users
 
@@ -288,7 +314,7 @@ def get_user(username: str, token: str = Depends(oauth2_scheme)):
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     
-    if user.get("permission") != "admin" or user["username"] != username:
+    if not (user.get("permission") == "sysadmin" or user["username"] == username):
         raise HTTPException(status_code=403, detail="Permission denied")
     
     user_data = users_db.find_one({"username": username}, {"_id": 0, "password": 0})
@@ -310,7 +336,7 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     
-    if user.get("permission") != "admin" or user["username"] != username:
+    if not (user.get("permission") == "sysadmin" or user["username"] == username):
         raise HTTPException(status_code=403, detail="Permission denied")
     
     if user.get("organization") != users_db.find_one({"username": username}).get("organization"):
