@@ -305,8 +305,9 @@ def reject_signup(username: str, token: str = Depends(oauth2_scheme)):
     if not prospective_user:
         raise HTTPException(status_code=404, detail="Prospective user not found")
     
+    org_result = orgs_db.delete_one({"_id": prospective_user["organization"]})
     result = prospective_users_db.delete_one({"username": username})
-    if result.deleted_count == 0:
+    if result.deleted_count == 0 or org_result.deleted_count == 0:
         raise HTTPException(status_code=500, detail="Failed to reject user")
     
     return {"message": "User rejected successfully"}
@@ -435,7 +436,7 @@ class InviteSignupModel(BaseModel):
 def invite_signin(
     form_data: InviteSignupModel
 ):
-    user = users_db.find_one({"invite_code": form_data,invite_code})
+    user = users_db.find_one({"invite_code": form_data.invite_code})
     if not user:
         raise HTTPException(status_code=404, detail="Invite not found")
 
