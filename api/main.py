@@ -1,13 +1,14 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from passlib.context import CryptContext
-from dotenv import load_dotenv
-from typing import List, Optional, Dict
+from dotenv import load_dotenv, find_dotenv
+from typing import List
+from pydantic import BaseModel
 
-import os
+import datetime
 
 app = FastAPI(title="Organizational AI API")
 
@@ -22,7 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-load_dotenv()
+load_dotenv(dotenv_path=find_dotenv())
 
 # --- Authorization Compatible Swagger UI ---
 def custom_openapi():
@@ -81,7 +82,7 @@ def login():
         </head>
         <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; padding: 20px;">
             <h1>Login</h1>
-            <div style="display: flex; justify-content: space-between; border: 1px solid #ccc; padding: 20px; margin: 20px; border-radius: 10px;background-color: #f9f9f9; text-align: center;">
+            <div id="login" style="display: flex; justify-content: space-between; border: 1px solid #ccc; padding: 20px; margin: 20px; border-radius: 10px;background-color: #f9f9f9; text-align: center;">
                 <form id="login-form" style="display: inline-block;">
                     <label for="login-username">Username:</label>
                     <input type="text" id="login-username" name="username" required></p>
@@ -91,74 +92,36 @@ def login():
                 </form>
             </div>
 
-            <h1>Sign Up</h1>
-            <div style="display: flex; justify-content: space-between; border: 1px solid #ccc; padding: 20px; margin: 20px; border-radius: 10px;background-color: #f9f9f9; text-align: center;">
-                <form id="signup-form" style="display: inline-block;">
-                    <p><label for="signup-username">Username:</label>
-                    <input type="text" id="signup-username" name="username" required></p>
-                    <p><label for="signup-password">Password:</label>
-                    <input type="password" id="signup-password" name="password" required></p>
-                    <button type="submit">Sign Up</button>
-                </form>
-            </div>
-
             <pre id="output"></pre>
 
             <script>
-            document.getElementById("login-form").addEventListener("submit", async function(e) {
-                e.preventDefault();
-                const username = document.getElementById("login-username").value;
-                const password = document.getElementById("login-password").value;
-                const formData = new URLSearchParams();
-                formData.append("username", username);
-                formData.append("password", password);
+                document.getElementById("login-form").addEventListener("submit", async function(e) {
+                    e.preventDefault();
+                    const username = document.getElementById("login-username").value;
+                    const password = document.getElementById("login-password").value;
+                    const formData = new URLSearchParams();
+                    formData.append("username", username);
+                    formData.append("password", password);
 
-                const response = await fetch("/signin", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded"
-                    },
-                    body: formData
+                    const response = await fetch("/signin", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded"
+                        },
+                        body: formData
+                    });
+
+                    const result = await response.json();
+                    document.getElementById("output").textContent = JSON.stringify(result, null, 2);
+                    document.getElementById("login").style.display = "none";
                 });
-
-                const result = await response.json();
-                document.getElementById("output").textContent = JSON.stringify(result, null, 2);
-            });
-
-            document.getElementById("signup-form").addEventListener("submit", async function(e) {
-                e.preventDefault();
-                const username = document.getElementById("signup-username").value;
-                const password = document.getElementById("signup-password").value;
-                const formData = new URLSearchParams();
-                formData.append("username", username);
-                formData.append("password", password);
-
-                const response = await fetch("/signup", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        username: username,
-                        password: password,
-                        firstname: "",
-                        lastname: "",
-                        email: "",
-                        phone: ""
-                    })
-                });
-
-                const result = await response.json();
-                document.getElementById("output").textContent = JSON.stringify(result, null, 2);
-            });
             </script>
         </body>
     </html>
     """
 
 # --- Authentication Routes ---
-from api.auth import create_access_token, verify_token, users_db
-import datetime
-
-from pydantic import BaseModel
+from api.auth import create_access_token, verify_token, users_db, orgs_db
 
 class SignupModel(BaseModel):
     username: str
@@ -169,12 +132,14 @@ class SignupModel(BaseModel):
     phone: str = ""
 
 @app.post("/signup")
-@app.post("/signup")
 def signup(form_data: SignupModel):
     if users_db.find_one({"username": form_data.username}):
         raise HTTPException(status_code=400, detail="User already exists")
     
     hashed_password = pwd_context.hash(form_data.password)
+
+    if orgs_db.find_one({"name": form_data.organization}):
+        raise HTTPException(status_code=400, detail="Organization already exists")
 
     result = users_db.insert_one({
         "username": form_data.username,
@@ -182,14 +147,28 @@ def signup(form_data: SignupModel):
         "firstname": form_data.firstname,
         "lastname": form_data.lastname,
         "email": form_data.email,
-        "phone": form_data.phone,
+        "phone": form_data.phone or "",
+        "organization": form_data.organization,
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow(),
-        "permission": "user"
+        "permission": "admin"
+    })
+
+    result_org = orgs_db.insert_one({
+        "name": form_data.organization,
+        "owner": form_data.username,
+        "users": [form_data.username],
+        "description": "",
+        "settings": {},
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow()
     })
 
     if not result.acknowledged:
         raise HTTPException(status_code=500, detail="User creation failed")
+    
+    if not result_org.acknowledged:
+        raise HTTPException(status_code=500, detail="Organization creation failed")
     
     return {"message": "User created successfully", "_id": str(result.inserted_id)}
 
@@ -216,7 +195,8 @@ def list_users(token: str = Depends(oauth2_scheme)):
     if user.get("permission") != "admin":
         raise HTTPException(status_code=403, detail="Permission denied")
     
-    users = list(users_db.find({}, {"_id": 0, "password": 0}))
+    users = list(users_db.find({"organization" : user.get("organization")}, {"_id": 0, "password": 0}))
+
     return users
 
 @app.get("/users/{username}")
@@ -237,6 +217,9 @@ def get_user(username: str, token: str = Depends(oauth2_scheme)):
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
     
+    if user_data.get("organization") != user.get("organization"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
     return user_data
 
 @app.delete("/users/{username}")
@@ -251,8 +234,19 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     if user.get("permission") != "admin" or user["username"] != username:
         raise HTTPException(status_code=403, detail="Permission denied")
     
+    if user.get("organization") != users_db.find_one({"username": username}).get("organization"):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
     result = users_db.delete_one({"username": username})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
 
     return {"message": f"User '{username}' deleted successfully"}
+
+# --- Email Sending Routes ---
+from api.mail import send_email
+
+@app.post("/send-email")
+async def send_email_basic_endpoint(recipient: str, subject: str, body: str, background_tasks: BackgroundTasks):
+    background_tasks.add_task(send_email, recipient, subject, body)
+    return {"message": "Email sending initiated."}
