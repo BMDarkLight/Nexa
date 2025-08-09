@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Form
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -359,7 +359,7 @@ def invite_user(username: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"User '{username}' invited successfully"}
 
 @app.post("/invite/signin/{username}")
-def invite_signin(username: str, form_data: OAuth2PasswordRequestForm = Depends()):
+def invite_signin(username: str, password: str = Form(...)):
     prospective_user = prospective_users_db.find_one({"username": username})
     if not prospective_user:
         raise HTTPException(status_code=404, detail="Prospective user not found")
@@ -367,7 +367,7 @@ def invite_signin(username: str, form_data: OAuth2PasswordRequestForm = Depends(
     if prospective_user.get("password"):
         raise HTTPException(status_code=400, detail="User already has a password set")
     
-    hashed_password = pwd_context.hash(form_data.password)
+    hashed_password = pwd_context.hash(password)
     
     result = prospective_users_db.update_one(
         {"username": username},
