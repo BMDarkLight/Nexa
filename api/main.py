@@ -121,7 +121,7 @@ def login():
     """
 
 # --- Authentication Routes ---
-from api.auth import create_access_token, verify_token, users_db, orgs_db
+from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
 
 class SignupModel(BaseModel):
     username: str
@@ -141,7 +141,7 @@ def signup(form_data: SignupModel):
     if orgs_db.find_one({"name": form_data.organization}):
         raise HTTPException(status_code=400, detail="Organization already exists")
 
-    result = users_db.insert_one({
+    result = prospective_users_db.insert_one({
         "username": form_data.username,
         "password": hashed_password,
         "firstname": form_data.firstname,
@@ -151,7 +151,7 @@ def signup(form_data: SignupModel):
         "organization": form_data.organization,
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow(),
-        "permission": "admin"
+        "permission": "orgadmin"
     })
 
     result_org = orgs_db.insert_one({
@@ -159,6 +159,7 @@ def signup(form_data: SignupModel):
         "owner": form_data.username,
         "users": [form_data.username],
         "description": "",
+        "plan": form_data.plan or "free",
         "settings": {},
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow()
@@ -181,6 +182,84 @@ def signin(form_data: OAuth2PasswordRequestForm = Depends()):
     access_token = create_access_token(data={"sub": user["username"]})
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+# --- Prospective Users Routes ---
+@app.post("/signup/approve/{username}")
+def approve_signup(username: str):
+    prospective_user = prospective_users_db.find_one({"username": username})
+    if not prospective_user:
+        raise HTTPException(status_code=404, detail="Prospective user not found")
+    
+    if users_db.find_one({"username": username}):
+        raise HTTPException(status_code=400, detail="User already exists")
+    
+    hashed_password = pwd_context.hash(prospective_user["password"])
+    
+    result = users_db.insert_one({
+        "username": prospective_user["username"],
+        "password": hashed_password,
+        "firstname": prospective_user["firstname"],
+        "lastname": prospective_user["lastname"],
+        "email": prospective_user["email"],
+        "phone": prospective_user["phone"],
+        "organization": prospective_user["organization"],
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow(),
+        "permission": prospective_user["permission"]
+    })
+
+    if not result.acknowledged:
+        raise HTTPException(status_code=500, detail="User creation failed")
+    
+    prospective_users_db.delete_one({"username": username})
+
+    return {"message": "User approved and created successfully", "_id": str(result.inserted_id)}
+
+@app.post("/signup/reject/{username}")
+def reject_signup(username: str):
+    prospective_user = prospective_users_db.find_one({"username": username})
+    if not prospective_user:
+        raise HTTPException(status_code=404, detail="Prospective user not found")
+    
+    result = prospective_users_db.delete_one({"username": username})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to reject user")
+    
+    return {"message": "User rejected successfully"}
+
+@app.get("/signup/prospective-users", response_model=List[dict])
+def list_prospective_users(token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    prospective_users = list(prospective_users_db.find({}, {"_id": 0, "password": 0}))
+    return prospective_users
+
+@app.get("/signup/prospective-users/{username}", response_model=dict)
+def get_prospective_user(username: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    prospective_user = prospective_users_db.find_one({"username": username}, {"_id": 0, "password": 0})
+
+    if not prospective_user:
+        raise HTTPException(status_code=404, detail="Prospective user not found")
+    
+    return prospective_user
 
 # --- User Management Routes ---
 @app.get("/users", response_model=List[dict])
@@ -246,7 +325,7 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
 # --- Email Sending Routes ---
 from api.mail import send_email
 
-@app.post("/send-email")
+@app.post("/email")
 async def send_email_basic_endpoint(recipient: str, subject: str, body: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(send_email, recipient, subject, body)
     return {"message": "Email sending initiated."}
