@@ -8,9 +8,11 @@ from dotenv import load_dotenv, find_dotenv
 from typing import List
 from pydantic import BaseModel
 
+from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
 from api.mail import send_email
 
 import datetime
+import secrets
 
 app = FastAPI(title="Organizational AI API")
 
@@ -54,6 +56,41 @@ def custom_openapi():
     return app.openapi_schema
 
 app.openapi = custom_openapi
+
+# --- Database Initialization ---
+import os
+import secrets
+import datetime
+
+def create_initial_sysadmin():
+    if users_db.count_documents({}) == 0:
+        username = os.getenv("SYSADMIN_USERNAME")
+        password = os.getenv("SYSADMIN_PASSWORD")
+        firstname = os.getenv("SYSADMIN_FIRSTNAME", "")
+        lastname = os.getenv("SYSADMIN_LASTNAME", "")
+        email = os.getenv("SYSADMIN_EMAIL", "")
+        phone = os.getenv("SYSADMIN_PHONE", "")
+        if not username or not password:
+            print("SYSADMIN_USERNAME or SYSADMIN_PASSWORD not set in env; skipping sysadmin creation")
+            return
+        
+        hashed_password = pwd_context.hash(password)
+        user = {
+            "username": username,
+            "password": hashed_password,
+            "firstname": firstname,
+            "lastname": lastname,
+            "email": email,
+            "phone": phone,
+            "created_at": datetime.datetime.utcnow(),
+            "updated_at": datetime.datetime.utcnow(),
+            "permission": "sysadmin",
+        }
+
+        users_db.insert_one(user)
+        print(f"Created initial sysadmin user: {username}")
+
+create_initial_sysadmin()
 
 # --- Home Page ---
 @app.get("/", response_class=HTMLResponse)
@@ -126,8 +163,6 @@ def login():
     """
 
 # --- Authentication Routes ---
-from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
-
 class SignupModel(BaseModel):
     username: str
     password: str
@@ -334,18 +369,21 @@ def invite_user(username: str, token: str = Depends(oauth2_scheme)):
         user = verify_token(token)
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-    
+
     if user.get("permission") != "orgadmin":
         raise HTTPException(status_code=403, detail="Permission denied")
-    
+
     organization = orgs_db.find_one({"owner": user["username"]})
     if not organization:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+    invite_code = secrets.token_urlsafe(16)
 
     prospective_users_db.insert_one({
         "username": username,
         "organization": organization["name"],
         "permission": "orguser",
+        "invite_code": invite_code,
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow()
     })
@@ -353,43 +391,58 @@ def invite_user(username: str, token: str = Depends(oauth2_scheme)):
     send_email(
         to=username,
         subject="Invitation to Join Organization",
-        body=f"You have been invited to join the organization '{organization['name']}'. Please sign up to accept the invitation."
+        body=(
+            f"You have been invited to join the organization '{organization['name']}'. "
+            f"Use the following invitation code to complete your signup:\n\n{invite_code}"
+        )
     )
 
     return {"message": f"User '{username}' invited successfully"}
 
 @app.post("/invite/signin/{username}")
-def invite_signin(username: str, password: str = Form(...)):
+def invite_signin(
+    username: str,
+    password: str = Form(...),
+    invite_code: str = Form(...)
+):
     prospective_user = prospective_users_db.find_one({"username": username})
     if not prospective_user:
         raise HTTPException(status_code=404, detail="Prospective user not found")
-    
+
     if prospective_user.get("password"):
         raise HTTPException(status_code=400, detail="User already has a password set")
-    
+
+    if prospective_user.get("invite_code") != invite_code:
+        raise HTTPException(status_code=403, detail="Invalid invitation code")
+
     hashed_password = pwd_context.hash(password)
-    
+
     result = prospective_users_db.update_one(
         {"username": username},
         {"$set": {
             "password": hashed_password,
-            "firstname": prospective_user["firstname"],
-            "lastname": prospective_user["lastname"],
-            "email": prospective_user["email"],
-            "phone": prospective_user["phone"],
+            "firstname": prospective_user.get("firstname", ""),
+            "lastname": prospective_user.get("lastname", ""),
+            "email": prospective_user.get("email", ""),
+            "phone": prospective_user.get("phone", ""),
             "updated_at": datetime.datetime.utcnow()
         }}
     )
-    
+
     if result.modified_count == 0:
         raise HTTPException(status_code=500, detail="Failed to register invited user")
-    
-    send_email(
-        to=users_db.find_one({"organization":prospective_user["organization"],"permission":"orgadmin"})["email"],
-        subject=f"Invited user {username} has signed up, Please approve them.",
-        body=f"The user '{username}' has signed up with the organization '{prospective_user['organization']}'. Please approve them to complete the registration."
-    )
-    
+
+    orgadmin = users_db.find_one({
+        "organization": prospective_user["organization"],
+        "permission": "orgadmin"
+    })
+    if orgadmin and orgadmin.get("email"):
+        send_email(
+            to=orgadmin["email"],
+            subject=f"Invited user {username} has signed up, Please approve them.",
+            body=f"The user '{username}' has signed up with the organization '{prospective_user['organization']}'. Please approve them to complete the registration."
+        )
+
     return {"message": "Invited user signed in successfully, please wait for approval"}
 
 @app.post("/invite/approve/{username}")
