@@ -14,34 +14,35 @@ if use_smtp:
     SMTP_USERNAME = os.getenv("SMTP_USERNAME", "admin")
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "password")
 
-    def send_email(recipient: str, subject: str, body: str):
+    def send_email(to: str, subject: str, body: str):
         msg = MIMEText(body, "html")
         msg["Subject"] = subject
         msg["From"] = os.getenv("SMTP_SENDER_EMAIL", "organizational@example.com")
-        msg["To"] = recipient
+        msg["To"] = to
 
         try:
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
                 server.starttls()
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(msg["From"], [recipient], msg.as_string())
+                server.sendmail(msg["From"], [to], msg.as_string())
         except Exception as e:
-            print(f"Failed to send email to {recipient}: {e}")
+            print(f"Failed to send email to {to}: {e}")
             raise
 else:
-    from resend import Resend
+    import resend
 
-    client = Resend(os.getenv("RESEND_API_KEY"))
+    resend.api_key = os.getenv("RESEND_API_KEY")
 
-    def send_email(recipient: str, subject: str, body: str):
+    def send_email(to: str, subject: str, body: str):
         try:
-            email = client.emails.send(
-                from_=os.getenv("RESEND_SENDER_EMAIL", "Organizational AI <organizational@example.com>"),
-                to=[recipient],
-                subject=subject,
-                html=body
-            )
+            params: resend.Emails.SendParams = {
+                "from": "Organizational AI <onboarding@resend.dev>",
+                "to": [to],
+                "subject": subject,
+                "html": body,
+            }
+            email = resend.Emails.send(params)
             return email
         except Exception as e:
-            print(f"Failed to send email to {recipient}: {e}")
+            print(f"Failed to send email to {to}: {e}")
             raise

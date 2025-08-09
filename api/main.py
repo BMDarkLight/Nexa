@@ -7,6 +7,7 @@ from passlib.context import CryptContext
 from dotenv import load_dotenv, find_dotenv
 from typing import List
 from pydantic import BaseModel
+from bson import ObjectId
 
 from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
 from api.mail import send_email
@@ -55,7 +56,7 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    public_paths = {"/signin", "/signup", "/login", "/"}
+    public_paths = {"/signin", "/signup", "/login", "/", "/invite/signup/{username}"}
     for path_name, path in openapi_schema["paths"].items():
         if path_name in public_paths:
             continue
@@ -72,7 +73,7 @@ import secrets
 import datetime
 
 def create_initial_sysadmin():
-    if users_db.count_documents({}) == 0:
+    if users_db.count_documents({"permission": "sysadmin"}) < 1:
         username = os.getenv("SYSADMIN_USERNAME")
         password = os.getenv("SYSADMIN_PASSWORD")
         firstname = os.getenv("SYSADMIN_FIRSTNAME", "")
@@ -95,9 +96,12 @@ def create_initial_sysadmin():
             "updated_at": datetime.datetime.utcnow(),
             "permission": "sysadmin",
         }
+        user_result = users_db.insert_one(user)
 
-        users_db.insert_one(user)
-        print(f"Created initial sysadmin user: {username}")
+        if user_result.acknowledged:
+            print(f"Created initial sysadmin user: {username}")
+        else:
+            print("Failed to create initial sysadmin user")
 
 create_initial_sysadmin()
 
@@ -184,14 +188,12 @@ class SignupModel(BaseModel):
 
 @app.post("/signup")
 def signup(form_data: SignupModel):
-    if users_db.find_one({"username": form_data.username}):
+    if users_db.find_one({"username":form_data.username}) or prospective_users_db.find_one({"username": form_data.username}):
         raise HTTPException(status_code=400, detail="User already exists")
-    
     hashed_password = pwd_context.hash(form_data.password)
-
     if orgs_db.find_one({"name": form_data.organization}):
         raise HTTPException(status_code=400, detail="Organization already exists")
-
+    
     result = prospective_users_db.insert_one({
         "username": form_data.username,
         "password": hashed_password,
@@ -199,36 +201,41 @@ def signup(form_data: SignupModel):
         "lastname": form_data.lastname,
         "email": form_data.email,
         "phone": form_data.phone or "",
-        "organization": form_data.organization,
+        "organization": None,
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow(),
         "permission": "orgadmin"
     })
-
+    user_id = result.inserted_id
     result_org = orgs_db.insert_one({
         "name": form_data.organization,
-        "owner": form_data.username,
-        "users": [form_data.username],
+        "owner": user_id,
+        "users": [user_id],
         "description": "",
         "plan": form_data.plan or "free",
         "settings": {},
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow()
     })
-
+    org_id = result_org.inserted_id
+    prospective_users_db.update_one(
+        {"_id": user_id},
+        {"$set": {"organization": org_id}}
+    )
     if not result.acknowledged:
         raise HTTPException(status_code=500, detail="User creation failed")
-    
     if not result_org.acknowledged:
         raise HTTPException(status_code=500, detail="Organization creation failed")
-    
-    return {"message": "User successfully registered in prospect list", "_id": str(result.inserted_id)}
+    return {"message": "User successfully registered in prospect list", "_id": str(user_id)}
 
 @app.post("/signin")
 def signin(form_data: OAuth2PasswordRequestForm = Depends()):
     user = users_db.find_one({"username": form_data.username})
     if not user or not pwd_context.verify(form_data.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    if user.get("status") == "pending":
+        raise HTTPException(status_code=403, detail="User is pending approval")
     
     access_token = create_access_token(data={"sub": user["username"]})
 
@@ -255,7 +262,6 @@ def approve_signup(username: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=400, detail="User already exists")
     
     hashed_password = prospective_user["password"]
-    
     result = users_db.insert_one({
         "username": prospective_user["username"],
         "password": hashed_password,
@@ -268,13 +274,17 @@ def approve_signup(username: str, token: str = Depends(oauth2_scheme)):
         "updated_at": datetime.datetime.utcnow(),
         "permission": prospective_user["permission"]
     })
-
+    user_id = result.inserted_id
+    orgs_db.update_one(
+        {"_id": prospective_user["organization"]},
+        {"$addToSet": {"users": user_id}}
+    )
     if not result.acknowledged:
         raise HTTPException(status_code=500, detail="User creation failed")
     
     prospective_users_db.delete_one({"username": username})
 
-    return {"message": "User approved and created successfully", "_id": str(result.inserted_id)}
+    return {"message": "User approved and created successfully", "_id": str(user_id)}
 
 @app.post("/signup/reject/{username}")
 def reject_signup(username: str, token: str = Depends(oauth2_scheme)):
@@ -345,9 +355,6 @@ def organization(token: str = Depends(oauth2_scheme)):
     if user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="Permission denied")
     
-    if orgs_db.find_one({"name": name}):
-        raise HTTPException(status_code=400, detail="Organization already exists")
-    
     return orgs_db.find({}, {"_id": 0})
 
 @app.get("/organizations/{name}", response_model=dict)
@@ -371,34 +378,39 @@ def get_organization(name: str, token: str = Depends(oauth2_scheme)):
 
 # --- Organization User Routes ---
 @app.post("/invite/{username}")
-def invite_user(username: str, token: str = Depends(oauth2_scheme)):
+def invite_user(username: str, email: str, token: str = Depends(oauth2_scheme)):
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         user = verify_token(token)
     except HTTPException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if users_db.find_one({"username":username}) or prospective_users_db.find_one({"username": username}):
+        raise HTTPException(status_code=400, detail="User already exists")
 
     if user.get("permission") != "orgadmin":
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    organization = orgs_db.find_one({"owner": user["username"]})
+    organization = orgs_db.find_one({"owner": ObjectId(user["_id"])})
     if not organization:
         raise HTTPException(status_code=404, detail="Organization not found")
 
     invite_code = secrets.token_urlsafe(16)
 
-    prospective_users_db.insert_one({
+    users_db.insert_one({
         "username": username,
-        "organization": organization["name"],
+        "email": email,
+        "organization": organization["_id"],
         "permission": "orguser",
         "invite_code": invite_code,
+        "status": "pending",
         "created_at": datetime.datetime.utcnow(),
         "updated_at": datetime.datetime.utcnow()
     })
 
     send_email(
-        to=username,
+        to=email,
         subject="Invitation to Join Organization",
         body=(
             f"You have been invited to join the organization '{organization['name']}'. "
@@ -408,33 +420,41 @@ def invite_user(username: str, token: str = Depends(oauth2_scheme)):
 
     return {"message": f"User '{username}' invited successfully"}
 
-@app.post("/invite/signin/{username}")
+class InviteSignupModel(BaseModel):
+    password: str
+    firstname: str = ""
+    lastname: str = ""
+    phone: str = ""
+
+
+@app.post("/invite/signup/{username}")
 def invite_signin(
-    username: str,
-    password: str = Form(...),
+    form_data: InviteSignupModel,
     invite_code: str = Form(...)
 ):
-    prospective_user = prospective_users_db.find_one({"username": username})
-    if not prospective_user:
-        raise HTTPException(status_code=404, detail="Prospective user not found")
+    user = users_db.find_one({"invite_code": invite_code})
+    if not user:
+        raise HTTPException(status_code=404, detail="Invite not found")
 
-    if prospective_user.get("password"):
+    if user.get("password"):
         raise HTTPException(status_code=400, detail="User already has a password set")
 
-    if prospective_user.get("invite_code") != invite_code:
-        raise HTTPException(status_code=403, detail="Invalid invitation code")
+    if user.get("status") != "pending":
+        raise HTTPException(status_code=403, detail="User is not in pending status")
+    
+    username = user["username"]
 
-    hashed_password = pwd_context.hash(password)
+    hashed_password = pwd_context.hash(form_data.password)
 
-    result = prospective_users_db.update_one(
+    result = users_db.update_one(
         {"username": username},
         {
             "$set": {
                 "password": hashed_password,
-                "firstname": prospective_user.get("firstname", ""),
-                "lastname": prospective_user.get("lastname", ""),
-                "email": prospective_user.get("email", ""),
-                "phone": prospective_user.get("phone", ""),
+                "firstname": form_data.firstname,
+                "lastname": form_data.lastname,
+                "phone": form_data.phone or "",
+                "status": "active",
                 "updated_at": datetime.datetime.utcnow()
             },
             "$unset": {"invite_code": ""}
@@ -445,60 +465,24 @@ def invite_signin(
         raise HTTPException(status_code=500, detail="Failed to register invited user")
 
     orgadmin = users_db.find_one({
-        "organization": prospective_user["organization"],
+        "organization": user["organization"],
         "permission": "orgadmin"
     })
+
     if orgadmin and orgadmin.get("email"):
         send_email(
             to=orgadmin["email"],
             subject=f"Invited user {username} has signed up, Please approve them.",
-            body=f"The user '{username}' has signed up with the organization '{prospective_user['organization']}'. Please approve them to complete the registration."
+            body=f"The user '{username}' has signed up with the organization '{user['organization']}'."
         )
 
-    return {"message": "Invited user signed in successfully, please wait for approval"}
+        send_email(
+            to=user["email"],
+            subject=f"Welcome to the Organization {user['organization']}",
+            body=f"Your account has been signed up {form_data.firstname}!"
+        )
 
-@app.post("/invite/approve/{username}")
-def approve_invite(username: str, token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
-    
-    prospective_user = prospective_users_db.find_one({"username": username})
-
-    if not prospective_user:
-        raise HTTPException(status_code=404, detail="Prospective user not found")
-    
-    if not (user.get("permission") == "orgadmin" and user.get("organization") == prospective_user.get("organization")):
-        raise HTTPException(status_code=403, detail="Permission denied")
-    
-    if users_db.find_one({"username": username}):
-        raise HTTPException(status_code=400, detail="User already exists")
-    
-    users_db.insert_one({
-        "username": prospective_user["username"],
-        "password": prospective_user["password"],
-        "firstname": prospective_user["firstname"],
-        "lastname": prospective_user["lastname"],
-        "email": prospective_user["email"],
-        "phone": prospective_user["phone"],
-        "organization": prospective_user["organization"],
-        "created_at": datetime.datetime.utcnow(),
-        "updated_at": datetime.datetime.utcnow(),
-        "permission": prospective_user["permission"]
-    })
-
-    prospective_users_db.delete_one({"username": username})
-
-    send_email(
-        to=prospective_user["email"],
-        subject="Invitation Approved",
-        body=f"Your invitation to join the organization '{prospective_user['organization']}' has been approved. You can now access the organization."
-    )
-    
-    return {"message": f"User '{username}' approved and created successfully"}
+    return {"message": "Invited user signed up successfully."}
 
 # --- User Management Routes ---
 @app.get("/users", response_model=List[dict])
