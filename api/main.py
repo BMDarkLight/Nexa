@@ -8,6 +8,8 @@ from dotenv import load_dotenv, find_dotenv
 from typing import List
 from pydantic import BaseModel
 
+from api.mail import send_email
+
 import datetime
 
 app = FastAPI(title="Organizational AI API")
@@ -42,7 +44,10 @@ def custom_openapi():
             "bearerFormat": "JWT",
         }
     }
-    for path in openapi_schema["paths"].values():
+    public_paths = {"/signin", "/signup", "/login", "/"}
+    for path_name, path in openapi_schema["paths"].items():
+        if path_name in public_paths:
+            continue
         for operation in path.values():
             operation["security"] = [{"BearerAuth": []}]
     app.openapi_schema = openapi_schema
@@ -205,7 +210,7 @@ def approve_signup(username: str, token: str = Depends(oauth2_scheme)):
     if users_db.find_one({"username": username}):
         raise HTTPException(status_code=400, detail="User already exists")
     
-    hashed_password = pwd_context.hash(prospective_user["password"])
+    hashed_password = prospective_user["password"]
     
     result = users_db.insert_one({
         "username": prospective_user["username"],
@@ -283,6 +288,153 @@ def get_prospective_user(username: str, token: str = Depends(oauth2_scheme)):
     
     return prospective_user
 
+# --- Organization Management Routes ---
+@app.get("/organizations", response_model=dict)
+def organization(token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    if orgs_db.find_one({"name": name}):
+        raise HTTPException(status_code=400, detail="Organization already exists")
+    
+    return orgs_db.find({}, {"_id": 0})
+
+@app.get("/organizations/{name}", response_model=dict)
+def get_organization(name: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    organization = orgs_db.find_one({"name": name}, {"_id": 0})
+    
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    return organization
+
+# --- Organization User Routes ---
+@app.post("/invite/{username}")
+def invite_user(username: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    organization = orgs_db.find_one({"owner": user["username"]})
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    prospective_users_db.insert_one({
+        "username": username,
+        "organization": organization["name"],
+        "permission": "orguser",
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow()
+    })
+
+    send_email(
+        to=username,
+        subject="Invitation to Join Organization",
+        body=f"You have been invited to join the organization '{organization['name']}'. Please sign up to accept the invitation."
+    )
+
+    return {"message": f"User '{username}' invited successfully"}
+
+@app.post("/invite/signin/{username}")
+def invite_signin(username: str, form_data: OAuth2PasswordRequestForm = Depends()):
+    prospective_user = prospective_users_db.find_one({"username": username})
+    if not prospective_user:
+        raise HTTPException(status_code=404, detail="Prospective user not found")
+    
+    if prospective_user.get("password"):
+        raise HTTPException(status_code=400, detail="User already has a password set")
+    
+    hashed_password = pwd_context.hash(form_data.password)
+    
+    result = prospective_users_db.update_one(
+        {"username": username},
+        {"$set": {
+            "password": hashed_password,
+            "firstname": prospective_user["firstname"],
+            "lastname": prospective_user["lastname"],
+            "email": prospective_user["email"],
+            "phone": prospective_user["phone"],
+            "updated_at": datetime.datetime.utcnow()
+        }}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to register invited user")
+    
+    send_email(
+        to=users_db.find_one({"organization":prospective_user["organization"],"permission":"orgadmin"})["email"],
+        subject=f"Invited user {username} has signed up, Please approve them.",
+        body=f"The user '{username}' has signed up with the organization '{prospective_user['organization']}'. Please approve them to complete the registration."
+    )
+    
+    return {"message": "Invited user signed in successfully, please wait for approval"}
+
+@app.post("/invite/approve/{username}")
+def approve_invite(username: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    prospective_user = prospective_users_db.find_one({"username": username})
+
+    if not prospective_user:
+        raise HTTPException(status_code=404, detail="Prospective user not found")
+    
+    if not (user.get("permission") == "orgadmin" and user.get("organization") == prospective_user.get("organization")):
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    if users_db.find_one({"username": username}):
+        raise HTTPException(status_code=400, detail="User already exists")
+    
+    users_db.insert_one({
+        "username": prospective_user["username"],
+        "password": prospective_user["password"],
+        "firstname": prospective_user["firstname"],
+        "lastname": prospective_user["lastname"],
+        "email": prospective_user["email"],
+        "phone": prospective_user["phone"],
+        "organization": prospective_user["organization"],
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow(),
+        "permission": prospective_user["permission"]
+    })
+
+    prospective_users_db.delete_one({"username": username})
+
+    send_email(
+        to=prospective_user["email"],
+        subject="Invitation Approved",
+        body=f"Your invitation to join the organization '{prospective_user['organization']}' has been approved. You can now access the organization."
+    )
+    
+    return {"message": f"User '{username}' approved and created successfully"}
+
 # --- User Management Routes ---
 @app.get("/users", response_model=List[dict])
 def list_users(token: str = Depends(oauth2_scheme)):
@@ -322,7 +474,7 @@ def get_user(username: str, token: str = Depends(oauth2_scheme)):
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
     
-    if user_data.get("organization") != user.get("organization"):
+    if user.get("permission") != "sysadmin" and user_data.get("organization") != user.get("organization"):
         raise HTTPException(status_code=403, detail="Permission denied")
     
     return user_data
@@ -339,7 +491,7 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     if not (user.get("permission") == "sysadmin" or user["username"] == username):
         raise HTTPException(status_code=403, detail="Permission denied")
     
-    if user.get("organization") != users_db.find_one({"username": username}).get("organization"):
+    if user.get("permission") != "sysadmin" and user.get("organization") != users_db.find_one({"username": username}).get("organization"):
         raise HTTPException(status_code=403, detail="Permission denied")
     
     result = users_db.delete_one({"username": username})
@@ -347,11 +499,3 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=404, detail="User not found")
 
     return {"message": f"User '{username}' deleted successfully"}
-
-# --- Email Sending Routes ---
-from api.mail import send_email
-
-@app.post("/email")
-async def send_email_basic_endpoint(recipient: str, subject: str, body: str, background_tasks: BackgroundTasks):
-    background_tasks.add_task(send_email, recipient, subject, body)
-    return {"message": "Email sending initiated."}
