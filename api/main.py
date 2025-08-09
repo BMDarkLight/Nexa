@@ -424,6 +424,7 @@ def invite_user(username: str, email: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"User '{username}' invited successfully"}
 
 class InviteSignupModel(BaseModel):
+    invite_code: str
     password: str
     firstname: str = ""
     lastname: str = ""
@@ -432,10 +433,9 @@ class InviteSignupModel(BaseModel):
 
 @app.post("/invite/signup/{username}")
 def invite_signin(
-    form_data: InviteSignupModel,
-    invite_code: str = Form(...)
+    form_data: InviteSignupModel
 ):
-    user = users_db.find_one({"invite_code": invite_code})
+    user = users_db.find_one({"invite_code": form_data,invite_code})
     if not user:
         raise HTTPException(status_code=404, detail="Invite not found")
 
