@@ -1,5 +1,6 @@
 # Core framework
 fastapi==0.95.2
+fastapi-security
 uvicorn[standard]==0.22.0
 starlette==0.27.0
 passlib[bcrypt]==1.7.4
@@ -7,12 +8,18 @@ python-dotenv==1.0.0
 python-jose[cryptography]==3.3.0
 pymongo==4.5.0
 python-multipart==0.0.6
+numpy
+
+# Agent framework
+openai
+langchain
+langchain-openai
+langchain-community
+langgraph
+langsmith
 
 # Email service
 resend==0.6.0
-
-# OpenAI
-openai
 
 # Testing
 pytest==7.4.4

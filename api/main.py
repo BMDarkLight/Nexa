@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from passlib.context import CryptContext
 from dotenv import load_dotenv, find_dotenv
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from bson import ObjectId
 
@@ -552,3 +552,125 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=404, detail="User not found")
 
     return {"message": f"User '{username}' deleted successfully"}
+
+# --- Agent Routes ---
+from api.agent import agent_node, sessions_db
+
+import uuid
+
+class QueryRequest(BaseModel):
+    query: str
+    session_id: Optional[str] = None
+
+class QueryResponse(BaseModel):
+    agent: str
+    response: str
+
+@app.post("/ask", response_model=QueryResponse)
+def ask(query: QueryRequest, token: str = Depends(oauth2_scheme)):
+    session_id = query.session_id or str(uuid.uuid4())
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if not query.query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    session = sessions_db.find_one({"session_id": session_id})
+    if session and session.get("user_id") != str(user["_id"]):
+        raise HTTPException(status_code=403, detail="Permission denied for this session")
+    
+    chat_history = session.get("chat_history", []) if session else []
+
+    result = agent_node(
+        question=query.query,
+        chat_history=chat_history
+    )
+
+    sessions_db.update_one(
+        {"session_id": session_id},
+        {"$set": {
+            "chat_history": result["chat_history"] + [{
+                "user": query.query,
+                "assistant": result["answer"],
+                "agent": result["agent"]
+            }],
+            "user_id": str(user["_id"])
+        }},
+        upsert=True
+    )
+
+    return QueryResponse(
+        agent=result["agent"],
+        response=result.get("answer", "No answer provided")
+    )
+
+# --- Session Management Routes ---
+from langchain_community.chat_models import ChatOpenAI
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+
+@app.get("/sessions", response_model=List[dict])
+def list_sessions(token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    sessions = list(sessions_db.find({"user_id": str(user["_id"])}, {"_id": 0}))
+    return sessions
+
+@app.get("/sessions/{session_id}", response_model=dict)
+def get_session(session_id: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    session = sessions_db.find_one({"session_id": session_id, "user_id": str(user["_id"])}, {"_id": 0})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    title_generator = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)
+
+    chat_history = session["chat_history"]
+
+    prompts = [
+        SystemMessage("You are a title generator. You receive the users chat history in the chatbot and generate a short title based on it. The title should represent what is going on in the chat, the title shouldn't be flashy or trendy, just helpful and straight to the point."),
+    ]
+
+    for user, assistant in chat_history:
+        prompts.append(HumanMessage(content=user))
+        prompts.append(AIMessage(content=assistant))
+    
+    title = title_generator.invoke(prompts)
+    
+    return {**session, "title":title.content}
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    result = sessions_db.delete_one({
+        "session_id": session_id,
+        "user_id": str(user["_id"])
+    })
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {"message": f"Session '{session_id}' deleted successfully"}
