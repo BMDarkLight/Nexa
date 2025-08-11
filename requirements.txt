@@ -1,28 +1,27 @@
 # Core framework
-fastapi==0.95.2
-fastapi-security
-uvicorn[standard]==0.22.0
-starlette==0.27.0
+fastapi==0.115.12
+fastapi-security==0.1.0
+uvicorn==0.21.1
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
-python-jose[cryptography]==3.3.0
-pymongo==4.5.0
-python-multipart==0.0.6
-numpy
+python-jose==3.5.0
+pymongo==4.13.2
+python-multipart==0.0.20
+numpy==1.26.4
 
 # Agent framework
-openai
-langchain
-langchain-openai
-langchain-community
-langgraph
-langsmith
+openai==1.75.0
+langchain==0.3.23
+langchain-openai==0.2.9
+langchain-community==0.3.21
+langgraph==0.2.72
+langsmith==0.3.45
 
 # Email service
-resend==0.6.0
+resend==2.12.0
 
 # Testing
-pytest==7.4.4
-pytest-asyncio==0.21.1
-pytest-mock
-httpx==0.24.1
+pytest==8.3.5
+pytest-asyncio==0.22.0
+pytest-mock==3.12.0
+httpx

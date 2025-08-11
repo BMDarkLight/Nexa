@@ -507,6 +507,12 @@ def list_users(token: str = Depends(oauth2_scheme)):
 
     users = list(users_db.find(query, {"_id": 0, "password": 0}))
 
+    users = list(users_db.find(query, {"_id": 0, "password": 0}))
+
+    for user in users:
+        if "organization" in user and isinstance(user.get("organization"), ObjectId):
+            user["organization"] = str(user["organization"])
+
     return users
 
 @app.get("/users/{username}")
