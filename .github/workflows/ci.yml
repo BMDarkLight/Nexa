@@ -16,17 +16,16 @@ jobs:
         ports:
           - 27017:27017
         options: >-
-          --health-cmd="mongosh --quiet --eval 'db.adminCommand(\"ping\")'" 
-          --health-interval=10s 
-          --health-timeout=5s 
-          --health-retries=5
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'" 
+          --health-interval 10s 
+          --health-timeout 5s 
+          --health-retries 5
 
     env:
       MONGO_URI: "mongodb://localhost:27017/testdb"
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      NODE_ENV: production
 
     steps:
       - name: Checkout repository
@@ -63,11 +62,15 @@ jobs:
       - name: Start FastAPI server
         run: |
           uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+        env:
+          MONGODB_URI: "mongodb://localhost:27017/testdb"
 
       - name: Start Next.js server
         run: |
           cd web
           npm run start -- --port 3000 &
+        env:
+          NODE_ENV: production
 
       - name: Wait for servers to be ready
         run: |
@@ -77,5 +80,7 @@ jobs:
           for i in {1..30}; do nc -z localhost 3000 && break; sleep 1; done
 
       - name: Run pytest
+        env:
+          MONGODB_URI: "mongodb://localhost:27017/testdb"
         run: |
           PYTHONPATH=. pytest -v
