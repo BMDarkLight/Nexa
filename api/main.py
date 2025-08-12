@@ -507,8 +507,6 @@ def list_users(token: str = Depends(oauth2_scheme)):
 
     users = list(users_db.find(query, {"_id": 0, "password": 0}))
 
-    users = list(users_db.find(query, {"_id": 0, "password": 0}))
-
     for user in users:
         if "organization" in user and isinstance(user.get("organization"), ObjectId):
             user["organization"] = str(user["organization"])
@@ -560,32 +558,52 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"User '{username}' deleted successfully"}
 
 # --- Agent Routes ---
-from api.agent import agent_node, sessions_db
+from api.agent import agent_node, sessions_db, agents_db
 
 import uuid
 
 class QueryRequest(BaseModel):
     query: str
     session_id: Optional[str] = None
+    agent_id: Optional[str] = None
 
 class QueryResponse(BaseModel):
-    agent: str
+    agent_name: str
     response: str
+    session_id: str
 
 @app.post("/ask", response_model=QueryResponse)
 def ask(query: QueryRequest, token: str = Depends(oauth2_scheme)):
-    session_id = query.session_id or str(uuid.uuid4())
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         user = verify_token(token)
     except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
+        raise e
     
     if not query.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
+    if not user.get("organization"):
+        raise HTTPException(status_code=403, detail="User is not associated with any organization.")
+
+    agent_id_to_use = None
+    
+    if query.agent_id:
+        if not ObjectId.is_valid(query.agent_id):
+             raise HTTPException(status_code=400, detail="Invalid agent_id format.")
+        
+        agent = agents_db.find_one({
+            "_id": ObjectId(query.agent_id),
+            "org": user["organization"]
+        })
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to use it.")
+        agent_id_to_use = query.agent_id
+
+    session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})
+    
     if session and session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session")
     
@@ -593,25 +611,29 @@ def ask(query: QueryRequest, token: str = Depends(oauth2_scheme)):
 
     result = agent_node(
         question=query.query,
-        chat_history=chat_history
+        organization_id=user["organization"],
+        chat_history=chat_history,
+        agent_id=agent_id_to_use
     )
+
+    new_history_entry = {
+        "user": query.query,
+        "assistant": result["answer"],
+        "agent_id": result["agent_id"],
+        "agent_name": result["agent_name"]
+    }
+    updated_chat_history = chat_history + [new_history_entry]
 
     sessions_db.update_one(
         {"session_id": session_id},
-        {"$set": {
-            "chat_history": result["chat_history"] + [{
-                "user": query.query,
-                "assistant": result["answer"],
-                "agent": result["agent"]
-            }],
-            "user_id": str(user["_id"])
-        }},
+        {"$set": {"chat_history": updated_chat_history, "user_id": str(user["_id"])}},
         upsert=True
     )
 
     return QueryResponse(
-        agent=result["agent"],
-        response=result.get("answer", "No answer provided")
+        agent_name=result["agent_name"],
+        response=result.get("answer", "No answer provided"),
+        session_id=session_id
     )
 
 # --- Session Management Routes ---
@@ -653,9 +675,9 @@ def get_session(session_id: str, token: str = Depends(oauth2_scheme)):
         SystemMessage("You are a title generator. You receive the users chat history in the chatbot and generate a short title based on it. The title should represent what is going on in the chat, the title shouldn't be flashy or trendy, just helpful and straight to the point."),
     ]
 
-    for user, assistant in chat_history:
-        prompts.append(HumanMessage(content=user))
-        prompts.append(AIMessage(content=assistant))
+    for entry in chat_history:
+        prompts.append(HumanMessage(content=entry["user"]))
+        prompts.append(AIMessage(content=entry["assistant"]))
     
     title = title_generator.invoke(prompts)
     
@@ -682,122 +704,106 @@ def delete_session(session_id: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"Session '{session_id}' deleted successfully"}
 
 # --- Agent Management Routes ---
-from api.agent import agents_db, Agent, Models, Tools
+from api.agent import Agent, Models, Tools
+
 @app.get("/agents", response_model=List[Agent])
 def list_agents(token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    user = verify_token(token)
+    if not user.get("organization"):
+        return []
     
-    agent = list(agents_db.find({"org": ObjectId(user["organization"])}, {"_id": 0}))
+    agents_cursor = agents_db.find({"org": ObjectId(user["organization"])})
+    return list(agents_cursor)
 
-    return agent
 
 @app.post("/agents", response_model=Agent)
 def create_agent(agent: Agent, token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = verify_token(token)
 
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
-    
     if user.get("permission") != "orgadmin":
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can create agents.")
+
+    agent_data = agent.model_dump(by_alias=True, exclude={"id"}) 
     
-    agent["org"] = ObjectId(user["organization"])
-    agent["created_at"] = datetime.datetime.utcnow().isoformat()
-    agent["updated_at"] = datetime.datetime.utcnow().isoformat()
+    agent_data["org"] = ObjectId(user["organization"])
+    agent_data["created_at"] = datetime.datetime.utcnow().isoformat()
+    agent_data["updated_at"] = agent_data["created_at"]
 
-    if not isinstance(agent.get("tools"), list):
-        agent["tools"] = []
-
-    if not isinstance(agent.get("model"), str) or agent["model"] not in Models.__args__:
-        raise HTTPException(status_code=400, detail="Invalid model specified")
-
-    result = agents_db.insert_one(agent)
-
-    if not result.acknowledged:
-        raise HTTPException(status_code=500, detail="Failed to create agent")
+    result = agents_db.insert_one(agent_data)
     
-    agent["_id"] = str(result.inserted_id)
-    return agent
+    created_agent = agents_db.find_one({"_id": result.inserted_id})
+    if not created_agent:
+        raise HTTPException(status_code=500, detail="Failed to create and retrieve the agent.")
+        
+    return created_agent
+
 
 @app.get("/agents/{agent_id}", response_model=Agent)
 def get_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    user = verify_token(token)
     
-    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])}, {"_id": 0})
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+    
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
 
     if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to view it.")
     
     return agent
+
 
 @app.put("/agents/{agent_id}", response_model=Agent)
-def update_agent(agent_id: str, agent: Agent, token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
+def update_agent(agent_id: str, agent_update: Agent, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
     
     if user.get("permission") != "orgadmin":
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can update agents.")
+
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+
+    if not agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])}):
+        raise HTTPException(status_code=404, detail="Agent not found.")
     
-    existing_agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])}, {"_id": 0})
-
-    if not existing_agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    update_data = agent_update.model_dump(exclude_unset=True, exclude_none=True)
     
-    agent["updated_at"] = datetime.datetime.utcnow().isoformat()
+    for field in ["id", "_id", "org", "created_at"]:
+        update_data.pop(field, None)
 
-    if not isinstance(agent.get("tools"), list):
-        agent["tools"] = []
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No valid update data provided.")
 
-    if not isinstance(agent.get("model"), str) or agent["model"] not in Models.__args__:
-        raise HTTPException(status_code=400, detail="Invalid model specified")
+    update_data["updated_at"] = datetime.datetime.utcnow().isoformat()
 
-    result = agents_db.update_one(
-        {"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])},
-        {"$set": agent}
+    agents_db.update_one(
+        {"_id": ObjectId(agent_id)},
+        {"$set": update_data}
     )
 
-    if result.modified_count == 0:
-        raise HTTPException(status_code=500, detail="Failed to update agent")
-    
-    agent["_id"] = agent_id
-    return agent
+    updated_agent = agents_db.find_one({"_id": ObjectId(agent_id)})
+    return updated_agent
+
 
 @app.delete("/agents/{agent_id}")
 def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        user = verify_token(token)
-    except HTTPException as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    user = verify_token(token)
     
     if user.get("permission") != "orgadmin":
-        raise HTTPException(status_code=403, detail="Permission denied")
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can delete agents.")
+
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
     
-    result = agents_db.delete_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
+    result = agents_db.delete_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
 
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
     
-    return {"message": f"Agent '{agent_id}' deleted successfully"}
+    return {"message": f"Agent '{agent_id}' deleted successfully."}

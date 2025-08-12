@@ -16,8 +16,7 @@ Models = Literal[
     "gpt-4",
     "gpt-4o",
     "gpt-4o-mini",
-    "gpt-4-turbo",
-    "gpt-5"
+    "gpt-4-turbo"
 ]
 
 class PyObjectId(ObjectId):
@@ -37,11 +36,12 @@ class PyObjectId(ObjectId):
 
 class Agent(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
-    id: PyObjectId = Field(default_factory=ObjectId, alias="_id")
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     name: str
     description: str
     org: PyObjectId
     model: Models
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     tools: list[Tools]
     created_at: str
     updated_at: str
@@ -50,50 +50,75 @@ class Agent(BaseModel):
 class ChatHistoryEntry(TypedDict):
     user: str
     assistant: str
-    agent: ObjectId | Literal["unknown"]
+    agent_id: str | None
+    agent_name: str
 
 class AgentState(TypedDict, total=False):
     question: str
     chat_history: list[ChatHistoryEntry]
-    session_id: str
-    agent: ObjectId
+    agent_id: str | None
+    agent_name: str
     answer: str
 
 @traceable
-def agent_node(question: str, chat_history: list[ChatHistoryEntry] | None = None) -> AgentState:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-
+def agent_node(question: str, organization_id: ObjectId, chat_history: list[ChatHistoryEntry] | None = None, agent_id: str | None = None) -> AgentState:
     question = question.strip()
     chat_history = chat_history or []
+    
+    selected_agent = None
 
-    summerizer = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-
-    summary_messages = [
-        SystemMessage(content="You are a chat history summarizer. If there is no chat history, return nothing. Summarize this chat history:")
-    ]
-
-    for entry in chat_history:
-        summary_messages.append(HumanMessage(content=entry['user']))
-        summary_messages.append(AIMessage(content=entry['assistant']))
-
-    summary = summerizer.invoke(summary_messages)
-
-    if not chat_history:
-        system_prompt = "You are a helpful assistant"
+    if agent_id:
+        selected_agent = agents_db.find_one({
+            "_id": ObjectId(agent_id),
+            "org": organization_id
+        })
     else:
-        system_prompt = f"You are a helpful assistant.\nHere is a summary of the chat history:\n{summary.content.strip()}\n"
+        agents = list(agents_db.find({"org": organization_id}))
+        if agents:
+            agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in agents])
+            
+            router_prompt = [
+                SystemMessage(
+                    content=(
+                        "You are an expert at routing a user's request to the correct agent. "
+                        "Based on the user's question, select the best agent from the following list. "
+                        "You must output **only the name** of the agent you choose. "
+                        "If no agent seems suitable for the request, you must output 'Generalist'."
+                        f"\n\nAvailable Agents:\n{agent_descriptions}"
+                    )
+                ),
+                HumanMessage(content=question)
+            ]
+            
+            router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+            selected_agent_name = router_llm.invoke(router_prompt).content.strip()
+            
+            selected_agent = next((agent for agent in agents if agent['name'] == selected_agent_name), None)
 
-    response = llm.invoke([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": question}
-    ])
-
-    raw_output = response.content.strip().lower()
-    label = raw_output if raw_output in {"crm-agent"} else "unknown"
+    if selected_agent:
+        agent_llm = ChatOpenAI(model=selected_agent["model"], temperature=selected_agent.get("temperature", 0.7))
+        system_prompt = selected_agent["description"]
+        final_agent_id = selected_agent["_id"]
+        final_agent_name = selected_agent["name"]
+    else:
+        agent_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+        system_prompt = "You are a helpful general-purpose assistant."
+        final_agent_id = None
+        final_agent_name = "Generalist"
+        
+    messages = [SystemMessage(content=system_prompt)]
+    for entry in chat_history:
+        messages.append(HumanMessage(content=entry['user']))
+        messages.append(AIMessage(content=entry['assistant']))
+    messages.append(HumanMessage(content=question))
+    
+    response = agent_llm.invoke(messages)
+    answer = response.content.strip()
 
     return {
         "question": question,
         "chat_history": chat_history,
-        "agent": label,
-        "answer": response.content.strip()
+        "agent_id": str(final_agent_id) if final_agent_id else None,
+        "agent_name": final_agent_name,
+        "answer": answer
     }
