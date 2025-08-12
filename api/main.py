@@ -680,3 +680,124 @@ def delete_session(session_id: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=404, detail="Session not found")
     
     return {"message": f"Session '{session_id}' deleted successfully"}
+
+# --- Agent Management Routes ---
+from api.agent import agents_db, Agent, Models, Tools
+@app.get("/agents", response_model=List[Agent])
+def list_agents(token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    agent = list(agents_db.find({"org": ObjectId(user["organization"])}, {"_id": 0}))
+
+    return agent
+
+@app.post("/agents", response_model=Agent)
+def create_agent(agent: Agent, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    agent["org"] = ObjectId(user["organization"])
+    agent["created_at"] = datetime.datetime.utcnow().isoformat()
+    agent["updated_at"] = datetime.datetime.utcnow().isoformat()
+
+    if not isinstance(agent.get("tools"), list):
+        agent["tools"] = []
+
+    if not isinstance(agent.get("model"), str) or agent["model"] not in Models.__args__:
+        raise HTTPException(status_code=400, detail="Invalid model specified")
+
+    result = agents_db.insert_one(agent)
+
+    if not result.acknowledged:
+        raise HTTPException(status_code=500, detail="Failed to create agent")
+    
+    agent["_id"] = str(result.inserted_id)
+    return agent
+
+@app.get("/agents/{agent_id}", response_model=Agent)
+def get_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])}, {"_id": 0})
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    return agent
+
+@app.put("/agents/{agent_id}", response_model=Agent)
+def update_agent(agent_id: str, agent: Agent, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    existing_agent = agents_db.find_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])}, {"_id": 0})
+
+    if not existing_agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    agent["updated_at"] = datetime.datetime.utcnow().isoformat()
+
+    if not isinstance(agent.get("tools"), list):
+        agent["tools"] = []
+
+    if not isinstance(agent.get("model"), str) or agent["model"] not in Models.__args__:
+        raise HTTPException(status_code=400, detail="Invalid model specified")
+
+    result = agents_db.update_one(
+        {"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])},
+        {"$set": agent}
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=500, detail="Failed to update agent")
+    
+    agent["_id"] = agent_id
+    return agent
+
+@app.delete("/agents/{agent_id}")
+def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    result = agents_db.delete_one({"_id": ObjectId(agent_id), "org": ObjectId(user["organization"])})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    return {"message": f"Agent '{agent_id}' deleted successfully"}
