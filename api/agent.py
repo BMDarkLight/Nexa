@@ -61,22 +61,27 @@ class AgentState(TypedDict, total=False):
     answer: str
 
 @traceable
-def agent_node(question: str, organization_id: ObjectId, chat_history: list[ChatHistoryEntry] | None = None, agent_id: str | None = None) -> AgentState:
+async def get_agent_components(
+    question: str,
+    organization_id: ObjectId,
+    chat_history: list | None = None,
+    agent_id: str | None = None,
+) -> tuple:
     question = question.strip()
     chat_history = chat_history or []
-    
+
     selected_agent = None
 
     if agent_id:
-        selected_agent = agents_db.find_one({
-            "_id": ObjectId(agent_id),
-            "org": organization_id
-        })
+        selected_agent = agents_db.find_one(
+            {"_id": ObjectId(agent_id), "org": organization_id}
+        )
     else:
         agents = list(agents_db.find({"org": organization_id}))
         if agents:
-            agent_descriptions = "\n".join([f"- **{agent['name']}**: {agent['description']}" for agent in agents])
-            
+            agent_descriptions = "\n".join(
+                [f"- **{agent['name']}**: {agent['description']}" for agent in agents]
+            )
             router_prompt = [
                 SystemMessage(
                     content=(
@@ -87,16 +92,21 @@ def agent_node(question: str, organization_id: ObjectId, chat_history: list[Chat
                         f"\n\nAvailable Agents:\n{agent_descriptions}"
                     )
                 ),
-                HumanMessage(content=question)
+                HumanMessage(content=question),
             ]
-            
             router_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-            selected_agent_name = router_llm.invoke(router_prompt).content.strip()
-            
-            selected_agent = next((agent for agent in agents if agent['name'] == selected_agent_name), None)
+            selected_agent_name_response = await router_llm.ainvoke(router_prompt)
+            selected_agent_name = selected_agent_name_response.content.strip()
+            selected_agent = next(
+                (agent for agent in agents if agent["name"] == selected_agent_name),
+                None,
+            )
 
     if selected_agent:
-        agent_llm = ChatOpenAI(model=selected_agent["model"], temperature=selected_agent.get("temperature", 0.7))
+        agent_llm = ChatOpenAI(
+            model=selected_agent["model"],
+            temperature=selected_agent.get("temperature", 0.7),
+        )
         system_prompt = selected_agent["description"]
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
@@ -105,20 +115,16 @@ def agent_node(question: str, organization_id: ObjectId, chat_history: list[Chat
         system_prompt = "You are a helpful general-purpose assistant."
         final_agent_id = None
         final_agent_name = "Generalist"
-        
+
     messages = [SystemMessage(content=system_prompt)]
     for entry in chat_history:
-        messages.append(HumanMessage(content=entry['user']))
-        messages.append(AIMessage(content=entry['assistant']))
+        messages.append(HumanMessage(content=entry["user"]))
+        messages.append(AIMessage(content=entry["assistant"]))
     messages.append(HumanMessage(content=question))
-    
-    response = agent_llm.invoke(messages)
-    answer = response.content.strip()
 
-    return {
-        "question": question,
-        "chat_history": chat_history,
-        "agent_id": str(final_agent_id) if final_agent_id else None,
-        "agent_name": final_agent_name,
-        "answer": answer
-    }
+    return (
+        agent_llm,
+        messages,
+        final_agent_name,
+        str(final_agent_id) if final_agent_id else None,
+    )

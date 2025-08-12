@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Form
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -558,7 +558,7 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"User '{username}' deleted successfully"}
 
 # --- Agent Routes ---
-from api.agent import agent_node, sessions_db, agents_db
+from api.agent import get_agent_components, sessions_db, agents_db
 
 import uuid
 
@@ -572,23 +572,42 @@ class QueryResponse(BaseModel):
     response: str
     session_id: str
 
-@app.post("/ask", response_model=QueryResponse)
-def ask(query: QueryRequest, token: str = Depends(oauth2_scheme)):
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+def save_chat_history(session_id: str, user_id: str, chat_history: list, query: str, answer: str, agent_id: str, agent_name: str):
+    new_history_entry = {
+        "user": query,
+        "assistant": answer,
+        "agent_id": agent_id,
+        "agent_name": agent_name
+    }
+    updated_chat_history = chat_history + [new_history_entry]
+    sessions_db.update_one(
+        {"session_id": session_id},
+        {"$set": {"chat_history": updated_chat_history, "user_id": user_id}},
+        upsert=True
+    )
+
+@app.post("/ask")
+async def ask(
+    query: QueryRequest, 
+    background_tasks: BackgroundTasks, 
+    token: str = Depends(oauth2_scheme)
+):
+    """
+    Handles a user's query, streams the LLM's response back,
+    and saves the full conversation history in the background.
+    """
     try:
         user = verify_token(token)
     except HTTPException as e:
         raise e
     
     if not query.query:
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
     
     if not user.get("organization"):
         raise HTTPException(status_code=403, detail="User is not associated with any organization.")
 
     agent_id_to_use = None
-    
     if query.agent_id:
         if not ObjectId.is_valid(query.agent_id):
              raise HTTPException(status_code=400, detail="Invalid agent_id format.")
@@ -605,36 +624,40 @@ def ask(query: QueryRequest, token: str = Depends(oauth2_scheme)):
     session = sessions_db.find_one({"session_id": session_id})
     
     if session and session.get("user_id") != str(user["_id"]):
-        raise HTTPException(status_code=403, detail="Permission denied for this session")
+        raise HTTPException(status_code=403, detail="Permission denied for this session.")
     
     chat_history = session.get("chat_history", []) if session else []
 
-    result = agent_node(
+    llm, messages, agent_name, agent_id = await get_agent_components(
         question=query.query,
         organization_id=user["organization"],
         chat_history=chat_history,
         agent_id=agent_id_to_use
     )
 
-    new_history_entry = {
-        "user": query.query,
-        "assistant": result["answer"],
-        "agent_id": result["agent_id"],
-        "agent_name": result["agent_name"]
-    }
-    updated_chat_history = chat_history + [new_history_entry]
+    async def response_generator():
+        full_answer = ""
+        async for chunk in llm.astream(messages):
+            content = chunk.content or ""
+            full_answer += content
+            yield content
+        
+        background_tasks.add_task(
+            save_chat_history,
+            session_id=session_id,
+            user_id=str(user["_id"]),
+            chat_history=chat_history,
+            query=query.query,
+            answer=full_answer,
+            agent_id=agent_id,
+            agent_name=agent_name
+        )
 
-    sessions_db.update_one(
-        {"session_id": session_id},
-        {"$set": {"chat_history": updated_chat_history, "user_id": str(user["_id"])}},
-        upsert=True
-    )
-
-    return QueryResponse(
-        agent_name=result["agent_name"],
-        response=result.get("answer", "No answer provided"),
-        session_id=session_id
-    )
+    return StreamingResponse(response_generator(), media_type="text/plain", headers={
+        "X-Agent-Name": agent_name,
+        "X-Session-Id": session_id,
+        "Access-Control-Expose-Headers": "X-Agent-Name, X-Session-Id"
+    })
 
 # --- Session Management Routes ---
 from langchain_community.chat_models import ChatOpenAI
