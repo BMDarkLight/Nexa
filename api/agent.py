@@ -4,19 +4,43 @@ from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from typing import TypedDict, Literal
 from pymongo import MongoClient
 from bson import ObjectId
+from pydantic import BaseModel, Field, ConfigDict
 import os
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.agents
 
 Tools = Literal[""]
-Models = Literal["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-5"]
+Models = Literal[
+    "gpt-3.5-turbo",
+    "gpt-4",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
+    "gpt-5"
+]
 
-class Agent(TypedDict):
-    _id: ObjectId
+class PyObjectId(ObjectId):
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _source_type, _handler):
+        from pydantic_core import core_schema
+        return core_schema.no_info_after_validator_function(
+            cls.validate,
+            core_schema.str_schema()
+        )
+
+    @classmethod
+    def validate(cls, value):
+        if not ObjectId.is_valid(value):
+            raise ValueError("Invalid ObjectId")
+        return ObjectId(value)
+
+class Agent(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
+    id: PyObjectId = Field(default_factory=ObjectId, alias="_id")
     name: str
     description: str
-    org: ObjectId
+    org: PyObjectId
     model: Models
     tools: list[Tools]
     created_at: str
