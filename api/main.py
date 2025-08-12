@@ -6,7 +6,7 @@ from fastapi.openapi.utils import get_openapi
 from passlib.context import CryptContext
 from dotenv import load_dotenv, find_dotenv
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from bson import ObjectId
 
 from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
@@ -727,7 +727,7 @@ def delete_session(session_id: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"Session '{session_id}' deleted successfully"}
 
 # --- Agent Management Routes ---
-from api.agent import Agent, Models, Tools
+from api.agent import Agent, AgentCreate, AgentUpdate
 
 @app.get("/agents", response_model=List[Agent])
 def list_agents(token: str = Depends(oauth2_scheme)):
@@ -736,11 +736,11 @@ def list_agents(token: str = Depends(oauth2_scheme)):
         return []
     
     agents_cursor = agents_db.find({"org": ObjectId(user["organization"])})
-    return list(agents_cursor)
+    return [Agent(**agent) for agent in agents_cursor]
 
 
 @app.post("/agents", response_model=Agent)
-def create_agent(agent: Agent, token: str = Depends(oauth2_scheme)):
+def create_agent(agent: AgentCreate, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
 
     if user.get("permission") != "orgadmin":
@@ -758,7 +758,7 @@ def create_agent(agent: Agent, token: str = Depends(oauth2_scheme)):
     if not created_agent:
         raise HTTPException(status_code=500, detail="Failed to create and retrieve the agent.")
         
-    return created_agent
+    return Agent(**created_agent)
 
 
 @app.get("/agents/{agent_id}", response_model=Agent)
@@ -776,11 +776,11 @@ def get_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to view it.")
     
-    return agent
+    return Agent(**agent)
 
 
 @app.put("/agents/{agent_id}", response_model=Agent)
-def update_agent(agent_id: str, agent_update: Agent, token: str = Depends(oauth2_scheme)):
+def update_agent(agent_id: str, agent_update: AgentUpdate, token: str = Depends(oauth2_scheme)):
     user = verify_token(token)
     
     if user.get("permission") != "orgadmin":
@@ -808,7 +808,7 @@ def update_agent(agent_id: str, agent_update: Agent, token: str = Depends(oauth2
     )
 
     updated_agent = agents_db.find_one({"_id": ObjectId(agent_id)})
-    return updated_agent
+    return Agent(**updated_agent)
 
 
 @app.delete("/agents/{agent_id}")

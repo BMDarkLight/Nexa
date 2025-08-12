@@ -1,7 +1,7 @@
 from langchain_community.chat_models import ChatOpenAI
 from langsmith import traceable
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from typing import TypedDict, Literal
+from typing import TypedDict, Literal, List, Optional
 from pymongo import MongoClient
 from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict
@@ -23,16 +23,23 @@ class PyObjectId(ObjectId):
     @classmethod
     def __get_pydantic_core_schema__(cls, _source_type, _handler):
         from pydantic_core import core_schema
-        return core_schema.no_info_after_validator_function(
-            cls.validate,
-            core_schema.str_schema()
+        def validate_object_id(v):
+            if isinstance(v, ObjectId):
+                return v
+            if ObjectId.is_valid(v):
+                return ObjectId(v)
+            raise ValueError("Invalid ObjectId")
+
+        return core_schema.json_or_python_schema(
+            json_schema=core_schema.no_info_after_validator_function(
+                validate_object_id, core_schema.str_schema()
+            ),
+            python_schema=core_schema.no_info_plain_validator_function(
+                validate_object_id
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(str),
         )
 
-    @classmethod
-    def validate(cls, value):
-        if not ObjectId.is_valid(value):
-            raise ValueError("Invalid ObjectId")
-        return ObjectId(value)
 
 class Agent(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
@@ -45,6 +52,21 @@ class Agent(BaseModel):
     tools: list[Tools]
     created_at: str
     updated_at: str
+
+
+class AgentCreate(BaseModel):
+    name: str
+    description: str
+    model: Models
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    tools: List[Tools] = []
+
+class AgentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    model: Optional[Models] = None
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    tools: Optional[List[Tools]] = None
     
 
 class ChatHistoryEntry(TypedDict):
