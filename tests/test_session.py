@@ -1,12 +1,13 @@
 import pytest
 from fastapi.testclient import TestClient
-from bson import ObjectId
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+import asyncio
 
 from api.main import app, pwd_context
 from api.auth import users_db
 from api.agent import sessions_db
 
+# The TestClient automatically handles the async nature of your app
 client = TestClient(app)
 
 # --- Fixtures ---
@@ -22,20 +23,20 @@ def cleanup_db():
 @pytest.fixture
 def authenticated_user_token():
     """
-    Creates a user, saves it to the DB, and returns a valid authentication token and user ID.
-    This reduces code duplication in tests that require an authenticated user.
+    Creates a user, saves it to the DB, and returns a valid auth token and user ID.
     """
     password = "testpassword123"
     user_doc = {
         "username": "test_session_user",
         "password": pwd_context.hash(password),
         "permission": "orguser",
-        "status": "active"
+        "status": "active",
+        # The /ask endpoint requires an organization
+        "organization": "test_org_id" 
     }
     result = users_db.insert_one(user_doc)
     user_id = result.inserted_id
 
-    # Sign in to get a token
     resp = client.post("/signin", data={"username": user_doc["username"], "password": password})
     assert resp.status_code == 200
     token = resp.json()["access_token"]
@@ -46,73 +47,106 @@ def auth_header(token):
     """Helper function to create authorization headers."""
     return {"Authorization": f"Bearer {token}"}
 
+# --- Helper for Mocking Streams ---
+def create_mock_llm_stream(text_response: str):
+    """Creates a mock LLM object with a fake async stream method."""
+    mock_llm = MagicMock()
+    
+    # This async generator simulates the behavior of LangChain's astream()
+    async def mock_astream_generator(*args, **kwargs):
+        for char in text_response:
+            # Each chunk from the stream is an object with a 'content' attribute
+            yield MagicMock(content=char)
+            await asyncio.sleep(0) # Yield control to the event loop
+
+    mock_llm.astream = mock_astream_generator
+    return mock_llm
 
 # --- Test Cases ---
 
-@patch('api.main.agent_node')
-def test_ask_creates_new_session(mock_agent_node, authenticated_user_token):
+# The patch target is updated to the new async function
+@patch('api.main.get_agent_components')
+def test_ask_creates_new_session_with_stream(mock_get_agent_components, authenticated_user_token):
     """
-    Tests that calling /ask without a session_id creates a new session in the database.
+    Tests that calling /ask without a session_id creates a new session
+    and returns a streaming response.
     """
-    # Setup: Mock the AI agent's response
-    mock_agent_node.return_value = {
-        "agent": "TestAgent",
-        "answer": "This is a mocked AI response.",
-        "chat_history": [] 
-    }
+    mocked_response_text = "This is a streamed response."
+    mock_llm = create_mock_llm_stream(mocked_response_text)
+    
+    # Setup: Mock the new function's return value (a tuple of components)
+    mock_get_agent_components.return_value = (
+        mock_llm, [], "MockAgent", "mock-agent-id"
+    )
     
     token, user_id = authenticated_user_token
     query_payload = {"query": "Hello, world!"}
     
-    # Action: Call the /ask endpoint
-    resp = client.post("/ask", headers=auth_header(token), json=query_payload)
+    # Action: Use a context manager to ensure background tasks are executed
+    with TestClient(app) as client:
+        resp = client.post("/ask", headers=auth_header(token), json=query_payload)
     
-    # Assertions
+    # Assertions for the streaming response
     assert resp.status_code == 200
-    assert resp.json()["response"] == "This is a mocked AI response."
-    
-    # Verify a new session was created in the database for the correct user
+    # The response body is now raw text, not JSON
+    assert resp.text == mocked_response_text 
+    # Check for metadata in headers
+    assert resp.headers["x-agent-name"] == "MockAgent"
+
+    # Verify a new session was created in the background
     assert sessions_db.count_documents({}) == 1
     session = sessions_db.find_one()
     assert session["user_id"] == user_id
     assert len(session["chat_history"]) == 1
     assert session["chat_history"][0]["user"] == "Hello, world!"
+    assert session["chat_history"][0]["assistant"] == mocked_response_text
 
-@patch('api.main.agent_node')
-def test_ask_updates_existing_session(mock_agent_node, authenticated_user_token):
+
+@patch('api.main.get_agent_components')
+def test_ask_updates_existing_session_with_stream(mock_get_agent_components, authenticated_user_token):
     """
-    Tests that calling /ask with an existing session_id correctly appends to the chat history.
+    Tests that calling /ask with an existing session_id correctly appends
+    to the chat history after streaming.
     """
     token, user_id = authenticated_user_token
     session_id = "test-session-123"
     
     # Setup 1: Manually create an existing session for the user
+    initial_history = [{"user": "First question", "assistant": "First answer"}]
     sessions_db.insert_one({
         "session_id": session_id,
         "user_id": user_id,
-        "chat_history": [{"user": "First question", "assistant": "First answer"}]
+        "chat_history": initial_history
     })
 
-    # Setup 2: Mock the AI agent's response
-    mock_agent_node.return_value = {
-        "agent": "TestAgent",
-        "answer": "This is the second response.",
-        "chat_history": [] # The function updates history itself
-    }
+    # Setup 2: Mock the agent components and stream
+    mocked_response_text = "This is the second response."
+    mock_llm = create_mock_llm_stream(mocked_response_text)
+    mock_get_agent_components.return_value = (
+        mock_llm, [], "MockAgent", "mock-agent-id"
+    )
     
     query_payload = {"query": "Second question", "session_id": session_id}
     
-    # Action: Call the /ask endpoint with the existing session_id
-    resp = client.post("/ask", headers=auth_header(token), json=query_payload)
+    # Action: Call the endpoint within a context manager
+    with TestClient(app) as client:
+        resp = client.post("/ask", headers=auth_header(token), json=query_payload)
     
     # Assertions
     assert resp.status_code == 200
+    assert resp.text == mocked_response_text
     
     # Verify the session was updated, not replaced
     updated_session = sessions_db.find_one({"session_id": session_id})
     assert sessions_db.count_documents({}) == 1
-    assert updated_session["chat_history"][0]["user"] == "Second question"
-    assert updated_session["chat_history"][0]["assistant"] == "This is the second response."
+    # Check that the history was appended correctly
+    assert len(updated_session["chat_history"]) == 2 
+    assert updated_session["chat_history"][0] == initial_history[0]
+    assert updated_session["chat_history"][1]["user"] == "Second question"
+    assert updated_session["chat_history"][1]["assistant"] == mocked_response_text
+
+
+# The following tests do not interact with the /ask endpoint and need no changes.
 
 def test_list_sessions_for_user(authenticated_user_token):
     """
@@ -120,51 +154,46 @@ def test_list_sessions_for_user(authenticated_user_token):
     """
     token, user_id = authenticated_user_token
     
-    # Setup: Create sessions for two different users
     sessions_db.insert_one({"session_id": "user1-session1", "user_id": user_id, "chat_history": []})
     sessions_db.insert_one({"session_id": "user1-session2", "user_id": user_id, "chat_history": []})
     sessions_db.insert_one({"session_id": "user2-session1", "user_id": "other_user_id", "chat_history": []})
     
-    # Action: Call the /sessions endpoint
     resp = client.get("/sessions", headers=auth_header(token))
     
-    # Assertions
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 2 # Should only return the 2 sessions for the authenticated user
+    assert len(data) == 2
     session_ids = {s["session_id"] for s in data}
     assert "user1-session1" in session_ids
     assert "user1-session2" in session_ids
+
 
 @patch('api.main.ChatOpenAI')
 def test_get_specific_session(MockChatOpenAI, authenticated_user_token):
     """
     Tests retrieving a single, specific session by its ID.
     """
-    # Setup 1: Mock the title generation AI call
     mock_instance = MockChatOpenAI.return_value
     mock_instance.invoke.return_value.content = "Mocked Session Title"
 
     token, user_id = authenticated_user_token
     session_id = "my-specific-session"
-    chat_history = [{"user": "question", "assistant": "answer"}]
+    chat_history = [{"user": "question", "assistant": "answer", "agent_name": "Test", "agent_id": "123"}]
     
-    # Setup 2: Create the session in the database
     sessions_db.insert_one({
         "session_id": session_id,
         "user_id": user_id,
         "chat_history": chat_history
     })
     
-    # Action: Call the endpoint for the specific session
     resp = client.get(f"/sessions/{session_id}", headers=auth_header(token))
     
-    # Assertions
     assert resp.status_code == 200
     data = resp.json()
     assert data["session_id"] == session_id
     assert data["chat_history"] == chat_history
     assert data["title"] == "Mocked Session Title"
+
 
 def test_delete_session(authenticated_user_token):
     """
@@ -173,14 +202,11 @@ def test_delete_session(authenticated_user_token):
     token, user_id = authenticated_user_token
     session_id = "session-to-delete"
     
-    # Setup: Create a session to be deleted
     sessions_db.insert_one({"session_id": session_id, "user_id": user_id})
     assert sessions_db.count_documents({"session_id": session_id}) == 1
     
-    # Action: Call the delete endpoint
     resp = client.delete(f"/sessions/{session_id}", headers=auth_header(token))
     
-    # Assertions
     assert resp.status_code == 200
     assert "deleted successfully" in resp.json()["message"]
     assert sessions_db.count_documents({"session_id": session_id}) == 0
