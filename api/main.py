@@ -56,7 +56,7 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    public_paths = {"/signin", "/signup", "/login", "/", "/invite/signup/{username}"}
+    public_paths = {"/signin", "/signup", "/login", "/", "/forgot-password", "/reset-password", "/invite/signup/{username}"}
     for path_name, path in openapi_schema["paths"].items():
         if path_name in public_paths:
             continue
@@ -244,6 +244,48 @@ def signin(form_data: OAuth2PasswordRequestForm = Depends()):
     access_token = create_access_token(data={"sub": user["username"]})
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/forgot-password")
+def forgot_password(username: str):
+    user = users_db.find_one({"username": username})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    reset_token = secrets.token_urlsafe(16)
+    users_db.update_one({"username": username}, {"$set": {"reset_token": reset_token}})
+    
+    reset_link = f"http://localhost:3000/login/reset-password?token={reset_token}&username={username}"
+    
+    if user["email"]:
+        send_email(
+            to=user["email"],
+            subject="Password Reset Request",
+            body=f"Click the link to reset your password: {reset_link}"
+        )
+    else:
+        raise HTTPException(status_code=400, detail="User does not have an email set")
+    
+    return {"message": "Password reset link sent to your email"}
+
+@app.post("/reset-password")
+def reset_password(username: str, token: str, new_password: str):
+    user = users_db.find_one({"username": username, "reset_token": token})
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid credentials")
+    
+    hashed_password = pwd_context.hash(new_password)
+    users_db.update_one(
+        {"username": username},
+        {
+            "$set": {
+                "password": hashed_password,
+                "reset_token": None,
+                "updated_at": datetime.datetime.utcnow()
+            }
+        }
+    )
+    
+    return {"message": "Password reset successfully"}
 
 # --- Prospective Users Routes ---
 @app.post("/signup/approve/{username}")
