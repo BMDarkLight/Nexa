@@ -1,5 +1,5 @@
 "use client"
-import React from "react";
+import React, { useState } from "react";
 import {Label} from "@/components/ui/label";
 import {Input} from "@/components/ui/input";
 import {Button} from "@/components/ui/button";
@@ -7,31 +7,51 @@ import LoginHeader from "@/app/login/components/LoginHeader";
 import {useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
+import { useSearchParams } from "next/navigation";
 export type TFormValue = {
       password : string ;
       cpassword : string;
 }
-const schema = Yup.object().shape({
-      password : Yup.string().required("وارد کردن رمز عبور اجباری است") , 
-      cpassword : Yup.string().oneOf([Yup.ref("password")] , "رمز عبور خود را مجددا تکرار کنید")
+const schema = Yup.object({
+      password: Yup.string().required("وارد کردن رمز عبور اجباری است").required() , 
+      cpassword : Yup.string().oneOf([Yup.ref("password")] , "رمز عبور خود را مجددا تکرار کنید").required()
 })
+type FormValues = Yup.InferType<typeof schema>;
+const API_Base_Url = process.env.API_BASE_URL ?? "http://localhost:8000" ; 
+const End_point = "/reset-password" ;
 export default function ResetPasswordCom(){
-    const {
-            register,
-            handleSubmit,
-            watch,
-            formState: { errors },
-          } = useForm<TFormValue>({
-            mode : "onTouched" , 
-              resolver: yupResolver(schema)
-          })
-          const onSubmit = (data : TFormValue) =>{
-              console.log(data);
-          }
+    const searchParams = useSearchParams()
+    const token = searchParams.get("token")
+    const username = searchParams.get("username")
+    const [password , setPassword] = useState("")
+    const [confirmPassword , setConfirmPassword] = useState("");
+      const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+    reset,
+  } = useForm<FormValues>({
+    mode : "onTouched",
+    resolver: yupResolver(schema),
+  });
+     async function onSubmit (data:FormValues){
+        try{
+            const respond = await fetch(`${API_Base_Url}${End_point}` , {
+                method : "POST" , 
+                headers : {"Content-type" : "application/json"} , 
+                body : JSON.stringify({username , token , password}) 
+            })
+            
+            
+        }catch{
+            console.log("خطایی رخ داده است");
+            
+        }
+    }
     return(
         <>
                     <LoginHeader title="تغییر رمز عبور" subTitle="رمز عبور خود را وارد کنید" headerLink="" />
-                    <form>
+                    <form onSubmit={handleSubmit(onSubmit)}>
                     <div className="flex flex-col gap-6">
                         <div className="grid gap-3">
                             <Label htmlFor="password1">رمز عبور جدید<span className="text-[#EF4444]">*</span></Label>
@@ -40,9 +60,6 @@ export default function ResetPasswordCom(){
                                 type="password"
                                 {...register("password")}
                             />
-                            {errors.password && (
-                                <p className="text-xs text-red-400">{errors.password.message}</p>
-                            )}
                         </div>
                         <div className="grid gap-3">
                             <Label htmlFor="repeat-password">تکرار رمز عبور جدید<span className="text-[#EF4444]">*</span></Label>
@@ -51,9 +68,11 @@ export default function ResetPasswordCom(){
                                 type="password"
                                 {...register("cpassword")}
                             />
-                             {errors.cpassword && (
-                                <p className="text-xs text-red-400">{errors.cpassword.message}</p>
-                            )}
+                            {
+                                errors.cpassword && (
+                                    <p className="text-xs text-red-400">{errors.cpassword.message}</p>
+                                )
+                            }
                         </div>
                         <Button type="submit" className="w-full cursor-pointer">
                             ذخیره رمز عبور
