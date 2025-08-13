@@ -8,8 +8,6 @@ import LoginHeader from "@/app/login/components/LoginHeader";
 import {useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
-import EmailInput from "./EmailInput";
-import PasswordInput from "./PasswordInput";
 import axios from "axios";
 import Cookie from "js-cookie";
 import Swal from "sweetalert2";
