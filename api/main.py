@@ -228,6 +228,10 @@ def signup(form_data: SignupModel):
         raise HTTPException(status_code=500, detail="Organization creation failed")
     return {"message": "User successfully registered in prospect list", "_id": str(user_id)}
 
+class SigninModel(BaseModel):
+    username: str
+    password: str
+
 @app.post("/signin")
 def signin(form_data: OAuth2PasswordRequestForm = Depends()):
     user = users_db.find_one({"username": form_data.username})
