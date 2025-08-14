@@ -105,6 +105,10 @@ def create_initial_sysadmin():
 
 create_initial_sysadmin()
 
+SERVER_URL = os.getenv("SERVER_URL", "http://localhost")
+UI_PORT = os.getenv("UI_PORT", "3000")
+API_PORT = os.getenv("API_PORT", "8000")
+
 # --- Home Page ---
 @app.get("/", response_class=HTMLResponse)
 async def main_page():
@@ -254,7 +258,7 @@ def forgot_password(username: str):
     reset_token = secrets.token_urlsafe(16)
     users_db.update_one({"username": username}, {"$set": {"reset_token": reset_token}})
     
-    reset_link = f"http://localhost:3000/login/reset-password?token={reset_token}&username={username}"
+    reset_link = f"{SERVER_URL}:{UI_PORT}/login/reset-password?token={reset_token}&username={username}"
     
     if user["email"]:
         send_email(
