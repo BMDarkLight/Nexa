@@ -1,25 +1,35 @@
 version: "3.8"
 
+networks:
+  shared-net:
+    driver: bridge
+
 services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.api
     command: sh -c "uvicorn api.main:app --host 0.0.0.0 --port ${API_PORT}"
     volumes:
       - .:/app
     ports:
       - "${API_PORT}:${API_PORT}"
+    networks:
+      - shared-net
     depends_on:
-      - frontend
+      - mongo
 
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.ui
     working_dir: /app/web
     command: sh -c "npm run dev -- -p ${UI_PORT}"
     volumes:
       - ./web:/app/web
     ports:
       - "${UI_PORT}:${UI_PORT}"
+    networks:
+      - shared-net
+    depends_on:
+      - backend
