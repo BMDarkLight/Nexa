@@ -5,11 +5,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    command: sh -c "uvicorn api.main:app --host 0.0.0.0 --port ${API_PORT}"
     volumes:
       - .:/app
     ports:
-      - "8000:8000"
+      - "${API_PORT}:${API_PORT}"
     depends_on:
       - frontend
 
@@ -18,8 +18,8 @@ services:
       context: .
       dockerfile: Dockerfile
     working_dir: /app/web
-    command: npm run dev
+    command: sh -c "npm run dev -- -p ${UI_PORT}"
     volumes:
       - ./web:/app/web
     ports:
-      - "3000:3000"
+      - "${UI_PORT}:${UI_PORT}"
