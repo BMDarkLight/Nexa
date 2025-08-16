@@ -51,6 +51,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image for ${{ matrix.package-name }}
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -58,3 +59,39 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    if: always()
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Copy .env file
+        run: |
+          if [ -f .env ]; then
+            echo ".env file found"
+          else
+            echo ".env file not found"
+          fi
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            DEPLOY_DIR="/home/overall/vsp/multi/multi-team-dev-deployment"
+            mkdir -p $DEPLOY_DIR
+            cd $DEPLOY_DIR
+
+            cp $GITHUB_WORKSPACE/.env . || echo "Environment file not found"
+
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/organizational-ai-api:latest
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/organizational-ai-ui:latest
+
+            docker compose up -d --no-build
+
+            echo "Deployment successful!"
