@@ -3,6 +3,15 @@ import type { Metadata } from "next";
 import "./globals.css";
 import localFont from "next/font/local";
 
+const myFont = localFont({
+  src: [
+    {
+      path: '../../public/fonts/IRANYekanX-Regular.woff2',
+      weight: '400',
+      style: 'normal',
+    }
+  ]
+});
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -16,7 +25,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" dir="rtl">
-      <body>
+      <body className={myFont.className}>
         {children}
       </body>
     </html>

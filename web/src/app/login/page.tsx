@@ -6,7 +6,7 @@ export default function LoginPage() {
     <>
     <LoginForm />
       <div className="text-muted-foreground *:[a]:hover:text-primary text-center text-xs text-balance *:[a]:underline *:[a]:underline-offset-4 sm:leading-5">
-        ورود به نکسا به معنی پذیرش تمامی <a href="#">قوانین و مقررات</a>آن می‌باشد
+        ورود به نکسا به معنی پذیرش تمامی <a href="#"> قوانین و مقررات</a>  آن می‌باشد
       </div>
     </>
   )

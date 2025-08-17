@@ -22,9 +22,6 @@ interface IUserData {
   plan: string;
   token?: string;
 }
-const NEXT_PUBLIC_SERVER_URL = process.env.NEXT_PUBLIC_API_PORT ;
-// console.log("this is server url" , NEXT_PUBLIC_SERVER_URL);
-
 const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 const End_point = "/signin";
 
@@ -74,10 +71,10 @@ export default function ValidateInputs() {
         }),
       });
 
-      const result = await loginRes.json();
+       const result = await loginRes.json();
       console.log("Login response:", result);
 
-      if (!result.access_token) {
+      if (!loginRes.ok || !result.access_token) {
         Swal.fire({
           icon: "error",
           title: "خطا",
@@ -86,25 +83,17 @@ export default function ValidateInputs() {
         return;
       }
 
-      if (!loginRes.ok) {
-        Swal.fire({
-          icon: "error",
-          title: "خطا",
-          text: "ورود با مشکل مواجه شد",
-        });
-        return;
-      }
-
-      const { access_token, token_type } = await loginRes.json();
+      const { access_token, token_type } = result;
 
       Cookie.set("auth_token", access_token, {
         expires: 7,
-        secure: true
+        // این روی لوکال هاست بدون سکیور ساخته میشه چون اچ تی تی پی هست ولی توی سرور با اچ تی تی پی اس سیکور هست
+        secure: process.env.NODE_ENV === "production", 
       });
-      Cookie.set("token_type", token_type, {
-        expires: 7,
-        secure: true
-      });
+      // Cookie.set("token_type", token_type, {
+      //   expires: 7,
+      //   secure: process.env.NODE_ENV === "production",
+      // });
 
       Swal.fire({ icon: "success", title: "موفق", text: "ورود موفقیت‌آمیز!" });
       reset();
@@ -123,8 +112,8 @@ export default function ValidateInputs() {
         <div className="flex flex-col gap-6">
           <LoginHeader
             title="ورود به نکسا"
-            subTitle="حساب کاربری ندارید؟"
-            headerLink="ثبت نام"
+            subTitle=""
+            headerLink=""
           />
           <div className="flex flex-col gap-6">
             <div className="grid gap-3">
@@ -134,7 +123,6 @@ export default function ValidateInputs() {
               <Input
                 id="username"
                 type="text"
-                placeholder="m@example.com"
                 {...register("username")}
               />
               {errors.username && (
