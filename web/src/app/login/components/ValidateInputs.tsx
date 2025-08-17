@@ -22,7 +22,10 @@ interface IUserData {
   plan: string;
   token?: string;
 }
-const API_Base_Url = process.env.API_BASE_URL ?? "http://localhost:8000";
+const NEXT_PUBLIC_SERVER_URL = process.env.NEXT_PUBLIC_API_PORT ;
+// console.log("this is server url" , NEXT_PUBLIC_SERVER_URL);
+
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
 const End_point = "/signin";
 
 export type TFormValue = {
@@ -46,49 +49,21 @@ export default function ValidateInputs() {
 
   const onSubmit = async (data: TFormValue) => {
     try {
-      const checkRes = await fetch(
-        `${API_Base_Url}${End_point}?username=${encodeURIComponent(
-          data.username
-        )}&password=${encodeURIComponent(data.password)}`
-      );
-      const matchedUsers: IUserData[] = await checkRes.json();
+      // const checkRes = await fetch(
+      //   `${API_Base_Url}${End_point}?username=${encodeURIComponent(
+      //     data.username
+      //   )}&password=${encodeURIComponent(data.password)}`
+      // );
+      // const matchedUsers: IUserData[] = await checkRes.json();
 
-      if (matchedUsers.length === 0) {
-        Swal.fire({
-          icon: "error",
-          title: "خطا",
-          text: "نام کاربری یا رمز عبور اشتباه است!",
-        });
-        return;
-      }
-
-      /*
-      const newUserData: IUserData = {
-        username: data.username,
-        password: data.password,
-        firstname: "",
-        lastname: "",
-        email: "",
-        phone: "",
-        organization: "string",
-        plan: "free",
-      };
-
-      const postRes = await fetch(`${API_Base_Url}${End_point}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newUserData),
-      });
-
-      if (!postRes.ok) {
-        Swal.fire({
-          icon: "error",
-          title: "خطا",
-          text: "ثبت کاربر با مشکل مواجه شد",
-        });
-        return;
-      }
-      */
+      // if (matchedUsers.length === 0) {
+      //   Swal.fire({
+      //     icon: "error",
+      //     title: "خطا",
+      //     text: "نام کاربری یا رمز عبور اشتباه است!",
+      //   });
+      //   return;
+      // }
 
       const loginRes = await fetch(`${API_Base_Url}${End_point}`, {
         method: "POST",
@@ -124,13 +99,11 @@ export default function ValidateInputs() {
 
       Cookie.set("auth_token", access_token, {
         expires: 7,
-        secure: true,
-        sameSite: "strict",
+        secure: true
       });
       Cookie.set("token_type", token_type, {
         expires: 7,
-        secure: true,
-        sameSite: "strict",
+        secure: true
       });
 
       Swal.fire({ icon: "success", title: "موفق", text: "ورود موفقیت‌آمیز!" });
@@ -176,7 +149,7 @@ export default function ValidateInputs() {
                   رمز عبور<span className="text-[#EF4444]">*</span>
                 </Label>
                 <Link
-                  href="/login/forgetpassword"
+                  href="/login/forget-password"
                   className="text-sm hover:underline transition duration-500"
                 >
                   رمز عبورتان را فراموش کردید؟

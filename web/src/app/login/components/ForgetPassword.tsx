@@ -22,10 +22,10 @@ interface IUserData {
   token?: string;
 }
 export type TFormValue = {
-      username : string ;
+      email : string ;
 }
 const schema = Yup.object({
-      username : Yup.string().required("این فیلد اجباری است") 
+      email : Yup.string().email("ایمیل را درست وارد کنید").required("این فیلد اجباری است") 
 })
 export default function ForgetPasswordCom(){
      const {
@@ -41,44 +41,12 @@ export default function ForgetPasswordCom(){
       const End_point = "/forget-password" ;
         const onSubmit = async (data: TFormValue) => {
     try {
-      const checkRes = await fetch(
-        `${API_Base_Url}${End_point}?username=${encodeURIComponent(data.username)}}`
-      );
-      const matchedUsers: IUserData[] = await checkRes.json();
-
-      if (matchedUsers.length === 0) {
-        Swal.fire({ icon: "error", title: "خطا", text: "نام کاربری یا رمز عبور اشتباه است!" });
-        return;
-      }
-
-         const newUserData: IUserData = {
-        username: data.username,
-        password: "",
-        firstname: "",
-        lastname: "",
-        email: "",
-        phone: "",
-        organization: "string",
-        plan: "free"
-      };
-
-      const postRes = await fetch(`${API_Base_Url}${End_point}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newUserData)
-      });
-
-      if (!postRes.ok) {
-        Swal.fire({ icon: "error", title: "خطا", text: "ثبت کاربر با مشکل مواجه شد" });
-        return;
-      }
-
 
       const loginRes = await fetch(`${API_Base_Url}${End_point}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: data.username
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          email: data.email
         }),
       });
 
@@ -90,8 +58,7 @@ export default function ForgetPasswordCom(){
 
       const { access_token, token_type } = await loginRes.json();
 
-      Cookie.set("auth_token", access_token, { expires: 7, secure: true, sameSite: "strict" });
-      Cookie.set("token_type", token_type, { expires: 7, secure: true, sameSite: "strict" });
+      Cookie.set("auth_token", access_token, { expires: 7, secure: true });
 
       Swal.fire({ icon: "success", title: "موفق", text: "ورود موفقیت‌آمیز!" });
       reset();
@@ -106,12 +73,12 @@ export default function ForgetPasswordCom(){
                     <div className="flex flex-col gap-6">
                         
                         <div className="grid gap-3">
-                            <Label htmlFor="username">نام کاربری<span className="text-[#EF4444]">*</span></Label>
+                            <Label htmlFor="email">ایمیل<span className="text-[#EF4444]">*</span></Label>
                             <Input
-                                id="username"
+                                id="email"
                                 type="text"
                                 placeholder="m@example.com"
-                                {...register("username")}
+                                {...register("email")}
                             />
                         </div>
                         <Button type="submit" className="w-full cursor-pointer">

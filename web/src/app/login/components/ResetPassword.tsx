@@ -38,10 +38,13 @@ export default function ResetPasswordCom(){
         try{
             const respond = await fetch(`${API_Base_Url}${End_point}` , {
                 method : "POST" , 
-                headers : {"Content-type" : "application/json"} , 
-                body : JSON.stringify({username , token , password}) 
+                headers : {"Content-type" : "x-www-form-urlencoded"} , 
+                body : new URLSearchParams({
+                    username: username ?? "" , 
+                    token: token ?? "", 
+                    password: password
+                }) 
             })
-            
             
         }catch{
             console.log("خطایی رخ داده است");
