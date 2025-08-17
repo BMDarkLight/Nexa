@@ -56,7 +56,7 @@ def custom_openapi():
             "bearerFormat": "JWT"
         }
     }
-    public_paths = {"/signin", "/signup", "/login", "/", "/forgot-password", "/reset-password", "/invite/signup/{username}"}
+    public_paths = {"/signin", "/signup", "/login", "/", "/forgot-password", "/reset-password", "/check-reset-token", "/invite/signup/{username}"}
     for path_name, path in openapi_schema["paths"].items():
         if path_name in public_paths:
             continue
