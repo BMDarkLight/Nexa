@@ -7,10 +7,12 @@ from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict
 import os
 
+from api.tools.web import search_web
+
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.agents
 
-Tools = Literal[""]
+Tools = Literal["search_web"]
 Models = Literal[
     "gpt-3.5-turbo",
     "gpt-4",
@@ -128,12 +130,19 @@ async def get_agent_components(
         agent_llm = ChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
+            tools=[search_web] if "search_web" in selected_agent["tools"] else [],
+            tool_choice="auto",
+            max_retries=3
         )
         system_prompt = selected_agent["description"]
         final_agent_id = selected_agent["_id"]
         final_agent_name = selected_agent["name"]
     else:
-        agent_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+        agent_llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            max_retries=3
+        )
         system_prompt = "You are a helpful general-purpose assistant."
         final_agent_id = None
         final_agent_name = "Generalist"

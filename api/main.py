@@ -112,72 +112,26 @@ API_PORT = os.getenv("API_PORT", "8000")
 # --- Home Page ---
 @app.get("/", response_class=HTMLResponse)
 async def main_page():
-    return """
-    <html>
-        <head>
-            <title>Organizational AI API</title>
-            <meta charset="UTF-8" />
-        </head>
-        <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; padding: 20px;">
-            <h1>Organizational AI</h1>
-            <p>Gen-AI for Organizations. Streamline all workflows across messenger, workspaces and organizational system in one place, and make them smart using AI.</p>
-            <h1>API Documentation</h1>
-            <p>To access the API, <a href="/login">Login Here</a> and get an access token.</p>
-            <p>To explore the API documentation, Visit <a href="/docs">Documentation</a></p>
-            <h1>GitHub Repository</h1>
-            <p>For source code and contributions, visit the <a href="https://github.com/BMDarkLight/Organizational-AI">GitHub repository</a>.</p>
-        </body>
-    </html>
-    """
+    with open("api/pages/home.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
+
+    return HTMLResponse(content=html_content)
 
 # --- Embedded Login Page ---
 @app.get("/login", response_class=HTMLResponse)
 def login():
-    return """
-    <html>
-        <head>
-            <title>Organizational AI API</title>
-            <meta charset="UTF-8" />
-        </head>
-        <body style="font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; padding: 20px;">
-            <h1>Login</h1>
-            <div id="login" style="display: flex; justify-content: space-between; border: 1px solid #ccc; padding: 20px; margin: 20px; border-radius: 10px;background-color: #f9f9f9; text-align: center;">
-                <form id="login-form" style="display: inline-block;">
-                    <label for="login-username">Username:</label>
-                    <input type="text" id="login-username" name="username" required></p>
-                    <p><label for="login-password">Password:</label>
-                    <input type="password" id="login-password" name="password" required></p>
-                    <button type="submit">Sign In</button>
-                </form>
-            </div>
+    with open("api/pages/login.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
 
-            <pre id="output"></pre>
+    return HTMLResponse(content=html_content)
 
-            <script>
-                document.getElementById("login-form").addEventListener("submit", async function(e) {
-                    e.preventDefault();
-                    const username = document.getElementById("login-username").value;
-                    const password = document.getElementById("login-password").value;
-                    const formData = new URLSearchParams();
-                    formData.append("username", username);
-                    formData.append("password", password);
+# --- Embedded Chatbot Page ---
+@app.get("/chatbot", response_class=HTMLResponse)
+def chatbot():
+    with open("api/pages/chatbot.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
 
-                    const response = await fetch("/signin", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/x-www-form-urlencoded"
-                        },
-                        body: formData
-                    });
-
-                    const result = await response.json();
-                    document.getElementById("output").textContent = JSON.stringify(result, null, 2);
-                    document.getElementById("login").style.display = "none";
-                });
-            </script>
-        </body>
-    </html>
-    """
+    return HTMLResponse(content=html_content)
 
 # --- Authentication Routes ---
 class SignupModel(BaseModel):
@@ -642,45 +596,43 @@ async def ask(
     background_tasks: BackgroundTasks, 
     token: str = Depends(oauth2_scheme)
 ):
-    """
-    Handles a user's query, streams the LLM's response back,
-    and saves the full conversation history in the background.
-    """
     try:
         user = verify_token(token)
     except HTTPException as e:
         raise e
-    
+
     if not query.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
-    
-    if not user.get("organization"):
+
+    if not user.get("organization") and user.get("permission") != "sysadmin":
         raise HTTPException(status_code=403, detail="User is not associated with any organization.")
 
     agent_id_to_use = None
     if query.agent_id:
         if not ObjectId.is_valid(query.agent_id):
-             raise HTTPException(status_code=400, detail="Invalid agent_id format.")
-        
-        agent = agents_db.find_one({
-            "_id": ObjectId(query.agent_id),
-            "org": user["organization"]
-        })
+            raise HTTPException(status_code=400, detail="Invalid agent_id format.")
+
+        agent_query = {"_id": ObjectId(query.agent_id)}
+        if user.get("permission") != "sysadmin":
+            agent_query["org"] = user["organization"]
+        agent = agents_db.find_one(agent_query)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to use it.")
         agent_id_to_use = query.agent_id
 
     session_id = query.session_id or str(uuid.uuid4())
     session = sessions_db.find_one({"session_id": session_id})
-    
+
     if session and session.get("user_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Permission denied for this session.")
-    
+
     chat_history = session.get("chat_history", []) if session else []
+
+    org_id = user.get("organization") if user.get("organization") else None
 
     llm, messages, agent_name, agent_id = await get_agent_components(
         question=query.query,
-        organization_id=user["organization"],
+        organization_id=org_id,
         chat_history=chat_history,
         agent_id=agent_id_to_use
     )
