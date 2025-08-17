@@ -17,6 +17,9 @@ langchain-community==0.3.21
 langgraph==0.2.72
 langsmith==0.3.45
 
+# Connectors
+duckduckgo_search==8.1.1
+
 # Email service
 resend==2.12.0
 
