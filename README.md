@@ -65,9 +65,9 @@ docker-compose up --build
 
 This will start the FastAPI backend and the Next.js frontend, exposing their respective ports.
 
-Accessing the API and Frontend
+Accessing the API and Frontend (In the default configuration)
 	•	API Swagger UI: http://localhost:8000/docs
-	•	Frontend app: http://localhost:3000
+	•	Frontend app: http://localhost:8010
 
 ### Running Tests
 

@@ -20,7 +20,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Default port, overridden by .env (UI_PORT)
-ENV UI_PORT=3000
+ENV UI_PORT=8010
 
 RUN addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 nextjs
