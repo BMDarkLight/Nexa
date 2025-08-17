@@ -8,6 +8,7 @@ import {useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
 import { useSearchParams } from "next/navigation";
+import Swal from "sweetalert2";
 export type TFormValue = {
       password : string ;
       cpassword : string;
@@ -45,6 +46,17 @@ export default function ResetPasswordCom(){
                     password: password
                 }) 
             })
+
+                  
+                  if (!respond.ok) {
+                          Swal.fire({
+                            icon: "error",
+                            title: "خطا",
+                            text: "خطا به وجود آمد",
+                          });
+                          return;
+                        }
+        Swal.fire({icon: "success" , title : "موفقیت"})
             
         }catch{
             console.log("خطایی رخ داده است");

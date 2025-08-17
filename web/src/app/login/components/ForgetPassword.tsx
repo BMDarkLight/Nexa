@@ -22,10 +22,10 @@ interface IUserData {
   token?: string;
 }
 export type TFormValue = {
-      email : string ;
+      username : string ;
 }
 const schema = Yup.object({
-      email : Yup.string().email("ایمیل را درست وارد کنید").required("این فیلد اجباری است") 
+      username : Yup.string().required("این فیلد اجباری است") 
 })
 export default function ForgetPasswordCom(){
      const {
@@ -46,21 +46,20 @@ export default function ForgetPasswordCom(){
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
-          email: data.email
+          email: data.username
         }),
       });
-
-
+      
       if (!loginRes.ok) {
-        console.log("failed to get token");
-        return;
-      }
+              Swal.fire({
+                icon: "error",
+                title: "خطا",
+                text: "خطا به وجود آمد",
+              });
+              return;
+            }
 
-      const { access_token, token_type } = await loginRes.json();
-
-      Cookie.set("auth_token", access_token, { expires: 7, secure: true });
-
-      Swal.fire({ icon: "success", title: "موفق", text: "ورود موفقیت‌آمیز!" });
+      Swal.fire({ icon: "success", title: "موفق", text: "ایمیل با موفقیت فرستاده شد" });
       reset();
     } catch (err) {
       Swal.fire({ icon: "error", title: "خطا", text: err instanceof Error ? err.message : "خطای ناشناخته" });
@@ -78,8 +77,9 @@ export default function ForgetPasswordCom(){
                                 id="email"
                                 type="text"
                                 placeholder="m@example.com"
-                                {...register("email")}
+                                {...register("username")}
                             />
+                            {}
                         </div>
                         <Button type="submit" className="w-full cursor-pointer">
                             دریافت لینک تغییر رمز
