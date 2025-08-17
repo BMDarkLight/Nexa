@@ -87,8 +87,6 @@ jobs:
             mkdir -p $DEPLOY_DIR
             cd $DEPLOY_DIR
 
-            cp $GITHUB_WORKSPACE/.env . || echo "Environment file not found"
-
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/organizational-ai-api:latest
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/organizational-ai-ui:latest
 

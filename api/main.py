@@ -225,6 +225,14 @@ def forgot_password(username: str):
     
     return {"message": "Password reset link sent to your email"}
 
+@app.post("/check-reset-token")
+def check_reset_token(username: str, token: str):
+    user = users_db.find_one({"username": username, "reset_token": token})
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid credentials")
+    else:
+        return {"message": "Token is valid"}
+
 @app.post("/reset-password")
 def reset_password(username: str, token: str, new_password: str):
     user = users_db.find_one({"username": username, "reset_token": token})
