@@ -8,17 +8,23 @@ from pydantic import BaseModel, Field, ConfigDict
 import os
 
 from api.tools.web import search_web
+from api.tools.google_sheet import read_google_sheet
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.agents
 
-Tools = Literal["search_web"]
+Tools = Literal[
+    "search_web",
+    "read_google_sheet",
+]
+
 Models = Literal[
     "gpt-3.5-turbo",
     "gpt-4",
     "gpt-4o",
     "gpt-4o-mini",
-    "gpt-4-turbo"
+    "gpt-4-turbo",
+    "gpt-5"
 ]
 
 class PyObjectId(ObjectId):
@@ -130,8 +136,14 @@ async def get_agent_components(
         agent_llm = ChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
-            tools=[search_web] if "search_web" in selected_agent["tools"] else [],
-            tool_choice="auto",
+            tools=[
+                tool for tool in [
+                    search_web if "search_web" in selected_agent.get("tools", []) else None,
+                    read_google_sheet if "read_google_sheet" in selected_agent.get("tools", []) else None,
+                ] if tool is not None
+            ],
+            tool_choice="auto" if selected_agent.get("tools") else None,
+            streaming=True,
             max_retries=3
         )
         system_prompt = selected_agent["description"]
