@@ -669,6 +669,145 @@ async def ask(
         "Access-Control-Expose-Headers": "X-Agent-Name, X-Session-Id"
     })
 
+@app.post("/ask/regenerate/{message_num}")
+async def regenerate(
+    query: QueryRequest,
+    message_num: int,
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise e
+
+    if not query.query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    if not user.get("organization") and user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="User is not associated with any organization.")
+    
+    if not query.session_id:
+        raise HTTPException(status_code=400, detail="Session ID is required for regeneration.")
+
+    if not ObjectId.is_valid(query.session_id):
+        raise HTTPException(status_code=400, detail="Invalid session_id format.")
+
+    session = sessions_db.find_one({"session_id": query.session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    
+    if session.get("user_id") != str(user["_id"]):
+        raise HTTPException(status_code=403, detail="Permission denied for this session.")
+
+    chat_history = session.get("chat_history", [])
+    if message_num < 0 or message_num >= len(chat_history):
+        raise HTTPException(status_code=400, detail="Invalid message number.")
+
+    org_id = user.get("organization") if user.get("organization") else None
+
+    llm, messages, agent_name, agent_id = await get_agent_components(
+        question=query.query,
+        organization_id=org_id,
+        chat_history=chat_history,
+        agent_id=query.agent_id
+    )
+
+    messages.pop(message_num)
+
+    async def response_generator():
+        full_answer = ""
+        async for chunk in llm.astream(messages):
+            content = chunk.content or ""
+            full_answer += content
+            yield content
+        
+        background_tasks.add_task(
+            save_chat_history,
+            session_id=query.session_id,
+            user_id=str(user["_id"]),
+            chat_history=chat_history,
+            query=query.query,
+            answer=full_answer,
+            agent_id=agent_id,
+            agent_name=agent_name
+        )
+
+    return StreamingResponse(response_generator(), media_type="text/plain", headers={
+        "X-Agent-Name": agent_name,
+        "X-Session-Id": query.session_id,
+        "Access-Control-Expose-Headers": "X-Agent-Name, X-Session-Id"
+    })
+
+@app.post("/ask/edit/{message_num}")
+async def edit_message(
+    query: QueryRequest,
+    message_num: int,
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        user = verify_token(token)
+    except HTTPException as e:
+        raise e
+
+    if not query.query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    if not user.get("organization") and user.get("permission") != "sysadmin":
+        raise HTTPException(status_code=403, detail="User is not associated with any organization.")
+    
+    if not query.session_id:
+        raise HTTPException(status_code=400, detail="Session ID is required for regeneration.")
+
+    if not ObjectId.is_valid(query.session_id):
+        raise HTTPException(status_code=400, detail="Invalid session_id format.")
+
+    session = sessions_db.find_one({"session_id": query.session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    
+    if session.get("user_id") != str(user["_id"]):
+        raise HTTPException(status_code=403, detail="Permission denied for this session.")
+
+    chat_history = session.get("chat_history", [])
+    if message_num < 0 or message_num >= len(chat_history):
+        raise HTTPException(status_code=400, detail="Invalid message number.")
+    
+    org_id = user.get("organization") if user.get("organization") else None
+
+    llm, messages, agent_name, agent_id = await get_agent_components(
+        question=query.query,
+        organization_id=org_id,
+        chat_history=chat_history,
+        agent_id=query.agent_id
+    )
+
+    messages[message_num] = HumanMessage(content=query.query)
+
+    async def response_generator():
+        full_answer = ""
+        async for chunk in llm.astream(messages):
+            content = chunk.content or ""
+            full_answer += content
+            yield content
+        
+        background_tasks.add_task(
+            save_chat_history,
+            session_id=query.session_id,
+            user_id=str(user["_id"]),
+            chat_history=chat_history,
+            query=query.query,
+            answer=full_answer,
+            agent_id=agent_id,
+            agent_name=agent_name
+        )
+
+    return StreamingResponse(response_generator(), media_type="text/plain", headers={
+        "X-Agent-Name": agent_name,
+        "X-Session-Id": query.session_id,
+        "Access-Control-Expose-Headers": "X-Agent-Name, X-Session-Id"
+    })
+
+
 # --- Session Management Routes ---
 from langchain_community.chat_models import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
