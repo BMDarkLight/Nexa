@@ -1,5 +1,5 @@
 import React from "react";
-import ForgetPasswordCom from "@/app/login/components/ForgetPassword";
+import ForgetPasswordCom from "../components/ForgetPassword";
 function ForgetPassword(){
     return(
         <>

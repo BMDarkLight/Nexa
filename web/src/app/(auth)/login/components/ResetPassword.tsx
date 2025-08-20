@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import LoginHeader from "@/app/login/components/LoginHeader";
+import LoginHeader from "./LoginHeader";
 import { useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
