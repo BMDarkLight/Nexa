@@ -1,0 +1,165 @@
+"use client";
+import React, { useState } from "react";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import LoginHeader from "@/app/login/components/LoginHeader";
+import { useForm } from "react-hook-form";
+import { yupResolver } from "@hookform/resolvers/yup";
+import * as Yup from "yup";
+import axios from "axios";
+import Cookie from "js-cookie";
+import Swal from "sweetalert2";
+// import dotenv from "dotenv";
+// dotenv.config()
+interface IUserData {
+  username: string;
+  password: string;
+  firstname: string;
+  lastname: string;
+  email: string;
+  phone: string;
+  organization: string;
+  plan: string;
+  token?: string;
+}
+const API_SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ;
+console.log("this is server url"  , API_SERVER_URL);
+
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+const End_point = "/signin";
+
+export type TFormValue = {
+  username: string;
+  password: string;
+};
+const schema = Yup.object({
+  username: Yup.string().required("لطفا نام کاربری خود را وارد کنید"),
+  password: Yup.string().required("وارد کردن رمز عبور اجباری است"),
+});
+export default function ValidateInputs() {
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors },
+    reset,
+  } = useForm<TFormValue>({
+    resolver: yupResolver(schema),
+  });
+
+  const onSubmit = async (data: TFormValue) => {
+    try {
+      // const checkRes = await fetch(
+      //   `${API_Base_Url}${End_point}?username=${encodeURIComponent(
+      //     data.username
+      //   )}&password=${encodeURIComponent(data.password)}`
+      // );
+      // const matchedUsers: IUserData[] = await checkRes.json();
+
+      // if (matchedUsers.length === 0) {
+      //   Swal.fire({
+      //     icon: "error",
+      //     title: "خطا",
+      //     text: "نام کاربری یا رمز عبور اشتباه است!",
+      //   });
+      //   return;
+      // }
+
+      const loginRes = await fetch(`${API_Base_Url}${End_point}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          username: data.username,
+          password: data.password,
+        }),
+      });
+
+       const result = await loginRes.json();
+      console.log("Login response:", result);
+
+      if (!loginRes.ok || !result.access_token) {
+        Swal.fire({
+          icon: "error",
+          title: "خطا",
+          text: "نام کاربری یا رمز عبور اشتباه است!",
+        });
+        return;
+      }
+
+      const { access_token, token_type } = result;
+
+      Cookie.set("auth_token", access_token, {
+        expires: 7,
+        secure: process.env.NODE_ENV === "production", 
+      });
+      // Cookie.set("token_type", token_type, {
+      //   expires: 7,
+      //   secure: process.env.NODE_ENV === "production",
+      // });
+
+      Swal.fire({ icon: "success", title: "موفق", text: "ورود موفقیت‌آمیز!" });
+      reset();
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "خطا",
+        text: err instanceof Error ? err.message : "خطای ناشناخته",
+      });
+    }
+  };
+
+  return (
+    <>
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <div className="flex flex-col gap-6">
+          <LoginHeader
+            title="ورود به نکسا"
+            subTitle=""
+            headerLink=""
+          />
+          <div className="flex flex-col gap-6">
+            <div className="grid gap-3">
+              <Label htmlFor="username">
+                نام کاربری<span className="text-[#EF4444]">*</span>
+              </Label>
+              <Input
+                id="username"
+                type="text"
+                {...register("username")}
+              />
+              {errors.username && (
+                <p className="text-red-500 text-sm">
+                  {errors.username.message}
+                </p>
+              )}
+            </div>
+            <div className="grid gap-3">
+              <div className="flex justify-between">
+                <Label htmlFor="password">
+                  رمز عبور<span className="text-[#EF4444]">*</span>
+                </Label>
+                <Link
+                  href="/login/forget-password"
+                  className="text-sm hover:underline transition duration-500"
+                >
+                  رمز عبورتان را فراموش کردید؟
+                </Link>
+              </div>
+              <Input id="password" type="password" {...register("password")} />
+              {errors.password && (
+                <p className="text-red-500 text-sm">
+                  {errors.password.message}
+                </p>
+              )}
+            </div>
+            <Button type="submit" className="w-full cursor-pointer">
+              ورود
+            </Button>
+          </div>
+        </div>
+      </form>
+    </>
+  );
+}
