@@ -1,5 +1,5 @@
 import React from "react";
-import LoginStructure from "@/app/login/components/LoginStructure";
+import LoginStructure from "./components/LoginStructure";
 
 export default function RootLayout({children,}: Readonly<{ children: React.ReactNode; }>) {
     return (
