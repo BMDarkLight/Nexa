@@ -15,9 +15,9 @@ SECRET_KEY = os.environ.get("AUTH_SECRET_KEY", generate_random_string(32))
 ALGORITHM = os.environ.get("AUTH_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("AUTH_TOKEN_EXPIRE", 1440))
 
-users_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.users
-prospective_users_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.prospective_users
-orgs_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.organizations
+users_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.users
+prospective_users_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.prospective_users
+orgs_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.organizations
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()

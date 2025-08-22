@@ -1,4 +1,4 @@
-# Organizational AI
+# Nexa
 
 Gen-AI for Organizations. Streamline all workflows across messenger, workspaces, and organizational systems in one place, and make them smart using AI.
 

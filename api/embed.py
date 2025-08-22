@@ -8,7 +8,7 @@ from datetime import datetime
 import os
 import numpy as np
 
-knowledge_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.users
+knowledge_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.users
 
 embedding = OpenAIEmbeddings()
 

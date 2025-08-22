@@ -15,11 +15,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - package-name: organizational-ai
+          - package-name: nexa
             dockerfile: ./Dockerfile
-          - package-name: organizational-ai-api
+          - package-name: nexa-api
             dockerfile: ./Dockerfile.api
-          - package-name: organizational-ai-ui
+          - package-name: nexa-ui
             dockerfile: ./Dockerfile.ui
 
     steps:
@@ -87,8 +87,8 @@ jobs:
             mkdir -p $DEPLOY_DIR
             cd $DEPLOY_DIR
 
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/organizational-ai-api:latest
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/organizational-ai-ui:latest
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-api:latest
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-ui:latest
 
             docker compose up -d --no-build
 

@@ -10,8 +10,8 @@ import os
 from api.tools.web import search_web
 from api.tools.google_sheet import read_google_sheet
 
-sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.sessions
-agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).org_ai.agents
+sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
+agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
 
 Tools = Literal[
     "search_web",

@@ -15,7 +15,7 @@ from api.mail import send_email
 import datetime
 import secrets
 
-app = FastAPI(title="Organizational AI API")
+app = FastAPI(title="Nexa API")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/signin")
@@ -35,7 +35,7 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     openapi_schema = get_openapi(
-        title="Organizational AI API",
+        title="Nexa API",
         version="1.0.0",
         description="Gen-AI for Organizations. Streamline all workflows across messenger, workspaces and organizational system in one place, and make them smart using AI.",
         routes=app.routes,

@@ -17,7 +17,7 @@ if use_smtp:
     def send_email(to: str, subject: str, body: str):
         msg = MIMEText(body, "html")
         msg["Subject"] = subject
-        msg["From"] = os.getenv("SMTP_SENDER_EMAIL", "organizational@example.com")
+        msg["From"] = os.getenv("SMTP_SENDER_EMAIL", "nexa@example.com")
         msg["To"] = to
 
         try:
@@ -36,7 +36,7 @@ else:
     def send_email(to: str, subject: str, body: str):
         try:
             params: resend.Emails.SendParams = {
-                "from": "Organizational AI <onboarding@resend.dev>",
+                "from": "Nexa <onboarding@resend.dev>",
                 "to": [to],
                 "subject": subject,
                 "html": body,
