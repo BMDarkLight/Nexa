@@ -570,7 +570,7 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"User '{username}' deleted successfully"}
 
 # --- Agent Routes ---
-from api.agent import get_agent_components, sessions_db, agents_db
+from api.agent import get_agent_components, sessions_db, agents_db, connectors_db
 from langchain.schema import HumanMessage
 import uuid
 
@@ -885,7 +885,7 @@ def delete_session(session_id: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"Session '{session_id}' deleted successfully"}
 
 # --- Agent Management Routes ---
-from api.agent import Agent, AgentCreate, AgentUpdate
+from api.agent import Agent, AgentCreate, AgentUpdate, Connector, ConnectorCreate, ConnectorUpdate
 
 @app.get("/agents", response_model=List[Agent])
 def list_agents(token: str = Depends(oauth2_scheme)):
@@ -988,3 +988,145 @@ def delete_agent(agent_id: str, token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to delete it.")
     
     return {"message": f"Agent '{agent_id}' deleted successfully."}
+
+# --- Connector Routes ---
+@app.get("/agents/{agent_id}/connectors", response_model=List[Connector])
+def list_connectors(agent_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+    
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to access it.")
+
+    connectors_cursor = connectors_db.find({"agent_id": ObjectId(agent_id)})
+    return [Connector(**connector) for connector in connectors_cursor]
+
+@app.post("/agents/{agent_id}/connectors", response_model=Connector, status_code=201)
+def create_connector(agent_id: str, connector_data: ConnectorCreate, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can manage connectors.")
+    
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+    
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to access it.")
+
+    if connectors_db.find_one({"agent_id": ObjectId(agent_id), "connector_type": connector_data.connector_type}):
+         raise HTTPException(status_code=400, detail=f"A '{connector_data.connector_type}' connector already exists for this agent.")
+
+    new_connector = connector_data.model_dump()
+    new_connector["agent_id"] = ObjectId(agent_id)
+    new_connector["connector_type"] = new_connector.pop("connector_type")
+    
+    result = connectors_db.insert_one(new_connector)
+    created_connector = connectors_db.find_one({"_id": result.inserted_id})
+    
+    return Connector(**created_connector)
+
+@app.get("/agents/{agent_id}/connectors/{connector_id}", response_model=Connector)
+def get_connector(agent_id: str, connector_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+    
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to access it.")
+
+    if not ObjectId.is_valid(connector_id):
+        raise HTTPException(status_code=400, detail="Invalid connector ID format.")
+    
+    connector = connectors_db.find_one({
+        "_id": ObjectId(connector_id),
+        "agent_id": ObjectId(agent_id)
+    })
+    if not connector:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+        
+    return Connector(**connector)
+
+
+@app.put("/agents/{agent_id}/connectors/{connector_id}", response_model=Connector)
+def update_connector(agent_id: str, connector_id: str, connector_update: ConnectorUpdate, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can update connectors.")
+    
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+    
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to access it.")
+
+    if not ObjectId.is_valid(connector_id):
+        raise HTTPException(status_code=400, detail="Invalid connector ID format.")
+    
+    update_data = connector_update.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No update data provided.")
+    
+    result = connectors_db.update_one(
+        {"_id": ObjectId(connector_id), "agent_id": ObjectId(agent_id)},
+        {"$set": update_data}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+
+    updated_connector = connectors_db.find_one({"_id": ObjectId(connector_id)})
+    return Connector(**updated_connector)
+
+
+@app.delete("/agents/{agent_id}/connectors/{connector_id}", status_code=200)
+def delete_connector(agent_id: str, connector_id: str, token: str = Depends(oauth2_scheme)):
+    user = verify_token(token)
+    if user.get("permission") != "orgadmin":
+        raise HTTPException(status_code=403, detail="Permission denied: Only organization admins can delete connectors.")
+    
+    if not ObjectId.is_valid(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent ID format.")
+    
+    agent = agents_db.find_one({
+        "_id": ObjectId(agent_id), 
+        "org": ObjectId(user["organization"])
+    })
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found or you do not have permission to access it.")
+
+    if not ObjectId.is_valid(connector_id):
+        raise HTTPException(status_code=400, detail="Invalid connector ID format.")
+
+    result = connectors_db.delete_one({
+        "_id": ObjectId(connector_id),
+        "agent_id": ObjectId(agent_id)
+    })
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Connector not found.")
+    
+    return {"message": "Connector deleted successfully"}

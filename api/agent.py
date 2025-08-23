@@ -1,21 +1,26 @@
 from langchain_community.chat_models import ChatOpenAI
 from langsmith import traceable
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from typing import TypedDict, Literal, List, Optional
+from typing import TypedDict, Literal, List, Optional, Dict, Any
 from pymongo import MongoClient
 from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict
 import os
+from functools import partial
 
 from api.tools.web import search_web
 from api.tools.google_sheet import read_google_sheet
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
+connectors_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.connectors
 
 Tools = Literal[
     "search_web",
-    "read_google_sheet",
+]
+
+Connectors = Literal[
+    "google_sheet"
 ]
 
 Models = Literal[
@@ -48,6 +53,19 @@ class PyObjectId(ObjectId):
             serialization=core_schema.plain_serializer_function_ser_schema(str),
         )
 
+class Connector(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    connector_type: Connectors = Field(..., alias="connector_type")
+    settings: Dict[str, Any]
+    agent_id: PyObjectId = Field(..., alias="agent_id")
+
+class ConnectorCreate(BaseModel):
+    connector_type: Connectors
+    settings: Dict[str, Any]
+
+class ConnectorUpdate(BaseModel):
+    settings: Optional[Dict[str, Any]] = None
 
 class Agent(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
@@ -60,7 +78,6 @@ class Agent(BaseModel):
     tools: list[Tools]
     created_at: str
     updated_at: str
-
 
 class AgentCreate(BaseModel):
     name: str
@@ -75,7 +92,6 @@ class AgentUpdate(BaseModel):
     model: Optional[Models] = None
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     tools: Optional[List[Tools]] = None
-    
 
 class ChatHistoryEntry(TypedDict):
     user: str
@@ -99,7 +115,6 @@ async def get_agent_components(
 ) -> tuple:
     question = question.strip()
     chat_history = chat_history or []
-
     selected_agent = None
 
     if agent_id:
@@ -133,16 +148,30 @@ async def get_agent_components(
             )
 
     if selected_agent:
+        # 1. Start with the agent's built-in tools (e.g., web search)
+        active_tools = [
+            tool for tool in [
+                search_web if "search_web" in selected_agent.get("tools", []) else None,
+            ] if tool is not None
+        ]
+
+        # 2. Find connectors for this agent and configure their tools
+        agent_connectors = list(connectors_db.find({"agent_id": selected_agent["_id"]}))
+        
+        for connector in agent_connectors:
+            if connector["connector_type"] == "google_sheet":
+                # Create a specialized version of the tool with its settings injected
+                configured_tool = partial(read_google_sheet, settings=connector["settings"])
+                
+                configured_tool.__doc__ = read_google_sheet.__doc__
+                
+                active_tools.append(configured_tool)
+        
         agent_llm = ChatOpenAI(
             model=selected_agent["model"],
             temperature=selected_agent.get("temperature", 0.7),
-            tools=[
-                tool for tool in [
-                    search_web if "search_web" in selected_agent.get("tools", []) else None,
-                    read_google_sheet if "read_google_sheet" in selected_agent.get("tools", []) else None,
-                ] if tool is not None
-            ],
-            tool_choice="auto" if selected_agent.get("tools") else None,
+            tools=active_tools,
+            tool_choice="auto" if active_tools else None,
             streaming=True,
             max_retries=3
         )

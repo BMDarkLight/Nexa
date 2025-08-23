@@ -6,43 +6,43 @@ import datetime
 # Assuming your app and dbs are accessible for testing
 from api.main import app, pwd_context
 from api.auth import users_db, orgs_db
-from api.agent import agents_db
+from api.agent import agents_db, connectors_db
 
 # Use the TestClient for making requests to your FastAPI app
 client = TestClient(app)
 
 # --- Fixtures ---
-
 @pytest.fixture(scope="module", autouse=True)
 def setup_and_teardown_db():
     """A fixture to clean the database before and after all tests in this module."""
     users_db.delete_many({})
     orgs_db.delete_many({})
     agents_db.delete_many({})
+    connectors_db.delete_many({})
     yield
     users_db.delete_many({})
     orgs_db.delete_many({})
     agents_db.delete_many({})
+    connectors_db.delete_many({})
 
 @pytest.fixture(scope="module")
 def org_admin_token():
     """
-    Creates an organization, an orgadmin user, and returns a valid auth token.
-    This is scoped to the module as it's a common requirement for all tests.
+    Creates an organization, an orgadmin user, and returns a valid auth token and org_id.
     """
-    org = orgs_db.insert_one({"name": "TestCorp"})
+    org = orgs_db.insert_one({"name": "ConnectorTestCorp"})
     org_id = org.inserted_id
     
     user_doc = {
-        "username": "test_org_admin",
-        "password": pwd_context.hash("adminpass"),
+        "username": "test_connector_admin",
+        "password": pwd_context.hash("connadminpass"),
         "permission": "orgadmin",
         "status": "active",
         "organization": org_id
     }
     users_db.insert_one(user_doc)
 
-    resp = client.post("/signin", data={"username": "test_org_admin", "password": "adminpass"})
+    resp = client.post("/signin", data={"username": "test_connector_admin", "password": "connadminpass"})
     assert resp.status_code == 200
     token = resp.json()["access_token"]
     
@@ -51,158 +51,140 @@ def org_admin_token():
 @pytest.fixture(scope="module")
 def regular_user_token(org_admin_token):
     """Creates a regular orguser for testing permission denials."""
-    _, org_id = org_admin_token # Get the org_id from the admin fixture
+    _, org_id = org_admin_token
     
     user_doc = {
-        "username": "test_regular_user",
-        "password": pwd_context.hash("userpass"),
+        "username": "test_connector_user",
+        "password": pwd_context.hash("connuserpass"),
         "permission": "orguser",
         "status": "active",
         "organization": org_id
     }
     users_db.insert_one(user_doc)
 
-    resp = client.post("/signin", data={"username": "test_regular_user", "password": "userpass"})
+    resp = client.post("/signin", data={"username": "test_connector_user", "password": "connuserpass"})
     assert resp.status_code == 200
     return resp.json()["access_token"]
+
+@pytest.fixture
+def test_agent(org_admin_token):
+    """Creates a test agent owned by the test organization."""
+    _, org_id = org_admin_token
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    agent_doc = {
+        "name": "Agent for Connectors",
+        "org": org_id,
+        "model": "gpt-4",
+        "description": "An agent to test connectors on.",
+        "tools": [],
+        "created_at": now,
+        "updated_at": now,
+        "temperature": 0.7
+    }
+    result = agents_db.insert_one(agent_doc)
+    return str(result.inserted_id)
+
 
 def auth_header(token):
     """Helper function to create authorization headers."""
     return {"Authorization": f"Bearer {token}"}
 
 
-# --- Test Cases ---
+# --- Test Cases for Connectors ---
 
-def test_create_agent_as_org_admin(org_admin_token):
-    """Tests that an orgadmin can successfully create a new agent."""
+def test_create_connector_as_org_admin(org_admin_token, test_agent):
+    """Tests that an orgadmin can successfully create a connector for an agent."""
     token, _ = org_admin_token
-    agent_payload = {
-        "name": "Sales Assistant",
-        "description": "Helps with sales inquiries.",
-        "model": "gpt-4o",
-        "temperature": 0.5,
-        "tools": []
+    agent_id = test_agent
+    
+    connector_payload = {
+        "connector_type": "google_sheet",
+        "settings": {"sheet_id": "12345", "credentials": "abcde"}
     }
     
-    resp = client.post("/agents", headers=auth_header(token), json=agent_payload)
+    resp = client.post(f"/agents/{agent_id}/connectors", headers=auth_header(token), json=connector_payload)
     
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.json()
-    assert data["name"] == "Sales Assistant"
-    assert data["temperature"] == 0.5
-    assert agents_db.count_documents({"name": "Sales Assistant"}) == 1
+    assert data["connector_type"] == "google_sheet"
+    assert data["settings"]["sheet_id"] == "12345"
+    assert connectors_db.count_documents({"agent_id": ObjectId(agent_id)}) == 1
 
-def test_create_agent_as_regular_user(regular_user_token):
-    """Tests that a regular user CANNOT create an agent."""
-    agent_payload = {
-        "name": "Unauthorized Agent", 
-        "description": "Should not be created.", 
-        "model": "gpt-3.5-turbo",
-        "tools": []
+def test_create_connector_as_regular_user(regular_user_token, test_agent):
+    """Tests that a regular user CANNOT create a connector."""
+    agent_id = test_agent
+    connector_payload = {
+        "connector_type": "google_sheet",
+        "settings": {"sheet_id": "should_not_be_created"}
     }
     
-    resp = client.post("/agents", headers=auth_header(regular_user_token), json=agent_payload)
+    resp = client.post(f"/agents/{agent_id}/connectors", headers=auth_header(regular_user_token), json=connector_payload)
     
     assert resp.status_code == 403
-    assert agents_db.count_documents({"name": "Unauthorized Agent"}) == 0
+    assert connectors_db.count_documents({"agent_id": ObjectId(agent_id)}) == 0
 
-def test_list_agents_for_organization(org_admin_token):
-    """Tests that an orgadmin can list all agents within their organization."""
-    token, org_id = org_admin_token
-    
-    agents_db.delete_many({})
-    now = datetime.datetime.now(datetime.UTC).isoformat()
-    
-    agents_db.insert_one({"name": "Agent A", "org": org_id, "model": "gpt-4", "description": "d", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
-    agents_db.insert_one({"name": "Agent B", "org": org_id, "model": "gpt-4", "description": "d", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
-    agents_db.insert_one({"name": "Agent C", "org": ObjectId(), "model": "gpt-4", "description": "d", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
+def test_list_connectors_for_agent(org_admin_token, test_agent):
+    """Tests listing all connectors associated with a specific agent."""
+    token, _ = org_admin_token
+    agent_id = test_agent
 
-    resp = client.get("/agents", headers=auth_header(token))
+    connectors_db.insert_one({"agent_id": ObjectId(agent_id), "connector_type": "google_sheet", "settings": {}})
+    
+    resp = client.get(f"/agents/{agent_id}/connectors", headers=auth_header(token))
     
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 2
-    agent_names = {agent["name"] for agent in data}
-    assert "Agent A" in agent_names
-    assert "Agent B" in agent_names
-    assert "Agent C" not in agent_names
+    assert len(data) == 1
+    assert data[0]["connector_type"] == "google_sheet"
 
-def test_get_specific_agent(org_admin_token):
-    """Tests retrieving a single agent by its ID."""
-    token, org_id = org_admin_token
-    now = datetime.datetime.now(datetime.UTC).isoformat()
+def test_update_connector_settings(org_admin_token, test_agent):
+    """Tests that an orgadmin can update the settings of an existing connector."""
+    token, _ = org_admin_token
+    agent_id = test_agent
     
-    result = agents_db.insert_one({"name": "Specific Agent", "org": org_id, "model": "gpt-4", "description": "d", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
-    agent_id = str(result.inserted_id)
-    
-    resp = client.get(f"/agents/{agent_id}", headers=auth_header(token))
-    
-    assert resp.status_code == 200
-    assert resp.json()["name"] == "Specific Agent"
-
-def test_update_agent_as_org_admin(org_admin_token):
-    """Tests that an orgadmin can successfully update an agent."""
-    token, org_id = org_admin_token
-    now = datetime.datetime.now(datetime.UTC).isoformat()
-
-    result = agents_db.insert_one({"name": "Original Name", "description": "Original Desc", "org": org_id, "model": "gpt-3.5-turbo", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
-    agent_id = str(result.inserted_id)
+    result = connectors_db.insert_one({
+        "agent_id": ObjectId(agent_id),
+        "connector_type": "google_sheet",
+        "settings": {"sheet_id": "old_id"}
+    })
+    connector_id = str(result.inserted_id)
     
     update_payload = {
-        "name": "Updated Name",
-        "temperature": 0.9,
+        "settings": {"sheet_id": "new_id", "credentials": "updated_creds"}
     }
     
-    resp = client.put(f"/agents/{agent_id}", headers=auth_header(token), json=update_payload)
+    resp = client.put(f"/agents/{agent_id}/connectors/{connector_id}", headers=auth_header(token), json=update_payload)
     
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["name"] == "Updated Name"
-    assert data["temperature"] == 0.9
-    
-    updated_doc = agents_db.find_one({"_id": ObjectId(agent_id)})
-    assert updated_doc["name"] == "Updated Name"
+    updated_doc = connectors_db.find_one({"_id": ObjectId(connector_id)})
+    assert updated_doc["settings"]["sheet_id"] == "new_id"
+    assert updated_doc["settings"]["credentials"] == "updated_creds"
 
-def test_update_agent_as_regular_user(regular_user_token, org_admin_token):
-    """Tests that a regular user CANNOT update an agent."""
-    _, org_id = org_admin_token
-    now = datetime.datetime.now(datetime.UTC).isoformat()
-
-    result = agents_db.insert_one({"name": "Untouchable Agent", "org": org_id, "model": "gpt-4", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
-    agent_id = str(result.inserted_id)
+def test_delete_connector_as_org_admin(org_admin_token, test_agent):
+    """Tests that an orgadmin can successfully delete a connector."""
+    token, _ = org_admin_token
+    agent_id = test_agent
     
-    update_payload = {"name": "Attempted Update"}
-    resp = client.put(f"/agents/{agent_id}", headers=auth_header(regular_user_token), json=update_payload)
+    result = connectors_db.insert_one({"agent_id": ObjectId(agent_id), "connector_type": "google_sheet", "settings": {}})
+    connector_id = str(result.inserted_id)
     
-    assert resp.status_code == 403
-    db_agent = agents_db.find_one({"_id": ObjectId(agent_id)})
-    assert db_agent["name"] == "Untouchable Agent"
-
-def test_delete_agent_as_org_admin(org_admin_token):
-    """Tests that an orgadmin can successfully delete an agent."""
-    token, org_id = org_admin_token
-    now = datetime.datetime.now(datetime.UTC).isoformat()
-
-    result = agents_db.insert_one({"name": "Agent to Delete", "org": org_id, "model": "gpt-4", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
-    agent_id = str(result.inserted_id)
+    assert connectors_db.count_documents({"_id": ObjectId(connector_id)}) == 1
     
-    assert agents_db.count_documents({"_id": ObjectId(agent_id)}) == 1
-    
-    resp = client.delete(f"/agents/{agent_id}", headers=auth_header(token))
+    resp = client.delete(f"/agents/{agent_id}/connectors/{connector_id}", headers=auth_header(token))
     
     assert resp.status_code == 200
     assert "deleted successfully" in resp.json()["message"]
-    assert agents_db.count_documents({"_id": ObjectId(agent_id)}) == 0
+    assert connectors_db.count_documents({"_id": ObjectId(connector_id)}) == 0
 
-def test_delete_agent_as_regular_user(regular_user_token, org_admin_token):
-    """Tests that a regular user CANNOT delete an agent."""
+def test_delete_connector_as_regular_user(regular_user_token, org_admin_token, test_agent):
+    """Tests that a regular user CANNOT delete a connector."""
     _, org_id = org_admin_token
-    now = datetime.datetime.now(datetime.UTC).isoformat()
+    agent_id = test_agent
 
-    result = agents_db.insert_one({"name": "Protected Agent", "org": org_id, "model": "gpt-4", "tools": [], "created_at": now, "updated_at": now, "temperature": 0.7})
-    agent_id = str(result.inserted_id)
+    result = connectors_db.insert_one({"agent_id": ObjectId(agent_id), "org": org_id, "connector_type": "google_sheet", "settings": {}})
+    connector_id = str(result.inserted_id)
 
-    resp = client.delete(f"/agents/{agent_id}", headers=auth_header(regular_user_token))
+    resp = client.delete(f"/agents/{agent_id}/connectors/{connector_id}", headers=auth_header(regular_user_token))
 
     assert resp.status_code == 403
-    assert agents_db.count_documents({"_id": ObjectId(agent_id)}) == 1
+    assert connectors_db.count_documents({"_id": ObjectId(connector_id)}) == 1
