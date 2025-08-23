@@ -1,16 +1,18 @@
 from langchain_community.chat_models import ChatOpenAI
 from langsmith import traceable
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
+from langchain.tools import Tool
 from typing import TypedDict, Literal, List, Optional, Dict, Any
 from pymongo import MongoClient
 from bson import ObjectId
 from pydantic import BaseModel, Field, ConfigDict
 import os
+import re
 from functools import partial
 
 from api.tools.web import search_web
 from api.tools.google_sheet import read_google_sheet
-from api.tools.google_drive import read_google_drive
+from api.tools.google_drive import read_google_drive_file
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -33,6 +35,10 @@ Models = Literal[
     "gpt-4-turbo",
     "gpt-5"
 ]
+
+def _clean_tool_name(name: str, prefix: str) -> str:
+    s = re.sub(r'\W+', '_', name)
+    return f"{prefix}_{s}".lower()
 
 class PyObjectId(ObjectId):
     @classmethod
@@ -58,15 +64,18 @@ class PyObjectId(ObjectId):
 class Connector(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    name: str = Field(...)
     connector_type: Connectors = Field(..., alias="connector_type")
     settings: Dict[str, Any]
     agent_id: PyObjectId = Field(..., alias="agent_id")
 
 class ConnectorCreate(BaseModel):
+    name: str = Field(...)
     connector_type: Connectors
     settings: Dict[str, Any]
 
 class ConnectorUpdate(BaseModel):
+    name: Optional[str] = None
     settings: Optional[Dict[str, Any]] = None
 
 class Agent(BaseModel):
@@ -158,21 +167,36 @@ async def get_agent_components(
 
         agent_connectors = list(connectors_db.find({"agent_id": selected_agent["_id"]}))
         
+        tool_function_map = {
+            "google_sheet": read_google_sheet,
+            "google_drive": read_google_drive_file
+        }
+
         for connector in agent_connectors:
-            match connector["connector_type"]:
-                case "google_sheet":
-                    configured_tool = partial(read_google_sheet, settings=connector["settings"])
-                    
-                    configured_tool.__doc__ = read_google_sheet.__doc__
-                    
-                    active_tools.append(configured_tool)
-                case "google_drive":
-                    configured_tool = partial(read_google_drive, settings=connector["settings"])
-                    
-                    configured_tool.__doc__ = read_google_drive.__doc__
-                    
-                    active_tools.append(configured_tool)
-                
+            connector_name = connector.get("name")
+            connector_type = connector.get("connector_type")
+
+            if not connector_name or connector_type not in tool_function_map:
+                continue
+
+            base_function = tool_function_map[connector_type]
+            
+            tool_name = _clean_tool_name(connector_name, base_function.__name__)
+            
+            tool_description = (
+                f"Use this tool to access the '{connector_name}' {connector_type.replace('_', ' ')}. "
+                f"It is a specialized version of the '{base_function.__name__}' tool.\n"
+                f"{base_function.__doc__}"
+            )
+
+            configured_func = partial(base_function, settings=connector["settings"])
+
+            new_tool = Tool(
+                name=tool_name,
+                func=configured_func,
+                description=tool_description
+            )
+            active_tools.append(new_tool)
         
         agent_llm = ChatOpenAI(
             model=selected_agent["model"],
