@@ -98,6 +98,7 @@ def test_create_connector_as_org_admin(org_admin_token, test_agent):
     agent_id = test_agent
     
     connector_payload = {
+        "name": "My Test Sheet", # <-- ADDED NAME
         "connector_type": "google_sheet",
         "settings": {"sheet_id": "12345", "credentials": "abcde"}
     }
@@ -106,6 +107,7 @@ def test_create_connector_as_org_admin(org_admin_token, test_agent):
     
     assert resp.status_code == 201
     data = resp.json()
+    assert data["name"] == "My Test Sheet"
     assert data["connector_type"] == "google_sheet"
     assert data["settings"]["sheet_id"] == "12345"
     assert connectors_db.count_documents({"agent_id": ObjectId(agent_id)}) == 1
@@ -114,6 +116,7 @@ def test_create_connector_as_regular_user(regular_user_token, test_agent):
     """Tests that a regular user CANNOT create a connector."""
     agent_id = test_agent
     connector_payload = {
+        "name": "Unauthorized Sheet", # <-- ADDED NAME
         "connector_type": "google_sheet",
         "settings": {"sheet_id": "should_not_be_created"}
     }
@@ -128,13 +131,19 @@ def test_list_connectors_for_agent(org_admin_token, test_agent):
     token, _ = org_admin_token
     agent_id = test_agent
 
-    connectors_db.insert_one({"agent_id": ObjectId(agent_id), "connector_type": "google_sheet", "settings": {}})
+    connectors_db.insert_one({
+        "agent_id": ObjectId(agent_id), 
+        "name": "Listed Sheet", # <-- ADDED NAME
+        "connector_type": "google_sheet", 
+        "settings": {}
+    })
     
     resp = client.get(f"/agents/{agent_id}/connectors", headers=auth_header(token))
     
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
+    assert data[0]["name"] == "Listed Sheet"
     assert data[0]["connector_type"] == "google_sheet"
 
 def test_update_connector_settings(org_admin_token, test_agent):
@@ -144,12 +153,14 @@ def test_update_connector_settings(org_admin_token, test_agent):
     
     result = connectors_db.insert_one({
         "agent_id": ObjectId(agent_id),
+        "name": "Original Name", # <-- ADDED NAME
         "connector_type": "google_sheet",
         "settings": {"sheet_id": "old_id"}
     })
     connector_id = str(result.inserted_id)
     
     update_payload = {
+        "name": "Updated Name",
         "settings": {"sheet_id": "new_id", "credentials": "updated_creds"}
     }
     
@@ -157,6 +168,7 @@ def test_update_connector_settings(org_admin_token, test_agent):
     
     assert resp.status_code == 200
     updated_doc = connectors_db.find_one({"_id": ObjectId(connector_id)})
+    assert updated_doc["name"] == "Updated Name"
     assert updated_doc["settings"]["sheet_id"] == "new_id"
     assert updated_doc["settings"]["credentials"] == "updated_creds"
 
@@ -165,7 +177,11 @@ def test_delete_connector_as_org_admin(org_admin_token, test_agent):
     token, _ = org_admin_token
     agent_id = test_agent
     
-    result = connectors_db.insert_one({"agent_id": ObjectId(agent_id), "connector_type": "google_sheet", "settings": {}})
+    result = connectors_db.insert_one({
+        "agent_id": ObjectId(agent_id), 
+        "name": "To Be Deleted", # <-- ADDED NAME
+        "connector_type": "google_sheet", "settings": {}
+    })
     connector_id = str(result.inserted_id)
     
     assert connectors_db.count_documents({"_id": ObjectId(connector_id)}) == 1
@@ -181,7 +197,13 @@ def test_delete_connector_as_regular_user(regular_user_token, org_admin_token, t
     _, org_id = org_admin_token
     agent_id = test_agent
 
-    result = connectors_db.insert_one({"agent_id": ObjectId(agent_id), "org": org_id, "connector_type": "google_sheet", "settings": {}})
+    result = connectors_db.insert_one({
+        "agent_id": ObjectId(agent_id), 
+        "name": "Protected", # <-- ADDED NAME
+        "org": org_id, 
+        "connector_type": "google_sheet", 
+        "settings": {}
+    })
     connector_id = str(result.inserted_id)
 
     resp = client.delete(f"/agents/{agent_id}/connectors/{connector_id}", headers=auth_header(regular_user_token))

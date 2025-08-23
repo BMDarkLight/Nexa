@@ -12,7 +12,7 @@ from functools import partial
 
 from api.tools.web import search_web
 from api.tools.google_sheet import read_google_sheet
-from api.tools.google_drive import read_google_drive_file
+from api.tools.google_drive import read_google_drive
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -169,7 +169,7 @@ async def get_agent_components(
         
         tool_function_map = {
             "google_sheet": read_google_sheet,
-            "google_drive": read_google_drive_file
+            "google_drive": read_google_drive
         }
 
         for connector in agent_connectors:
@@ -181,11 +181,11 @@ async def get_agent_components(
 
             base_function = tool_function_map[connector_type]
             
-            tool_name = _clean_tool_name(connector_name, base_function.__name__)
+            tool_name = _clean_tool_name(connector_name, base_function.name)
             
             tool_description = (
                 f"Use this tool to access the '{connector_name}' {connector_type.replace('_', ' ')}. "
-                f"It is a specialized version of the '{base_function.__name__}' tool.\n"
+                f"It is a specialized version of the '{base_function.name}' tool.\n"
                 f"{base_function.__doc__}"
             )
 

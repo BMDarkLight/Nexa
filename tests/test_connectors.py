@@ -64,6 +64,7 @@ def agent_with_connector(test_organization):
 
     connector_doc = {
         "agent_id": agent_id,
+        "name": "My Test Sheet",
         "connector_type": "google_sheet",
         "settings": {"credentials": "fake_creds_12345", "scope": "read_only"}
     }
@@ -86,10 +87,11 @@ async def test_components_for_agent_with_only_built_in_tools(test_organization, 
     )
 
     # The LLM should be configured with tools
-    configured_tools = llm.model_kwargs.get("tools")
-    assert configured_tools is not None
+    assert "tools" in llm.model_kwargs
+    configured_tools = llm.model_kwargs["tools"]
     assert len(configured_tools) == 1
     # Check that the tool is the correct function from the tools module
+    # --- CHANGE: Use .name instead of .__name__ ---
     assert configured_tools[0].name == search_web.name
 
 @pytest.mark.asyncio
@@ -104,18 +106,21 @@ async def test_components_for_agent_with_connector_tool(test_organization, agent
         agent_id=agent_with_connector
     )
 
-    configured_tools = llm.model_kwargs.get("tools")
-    assert configured_tools is not None
+    assert "tools" in llm.model_kwargs
+    configured_tools = llm.model_kwargs["tools"]
     assert len(configured_tools) == 1
     
     configured_tool = configured_tools[0]
     
-    # The tool should be a 'partial' function, pre-loaded with settings
-    assert isinstance(configured_tool, partial)
-    assert configured_tool.func.name == read_google_sheet.name
+    # The tool should be a LangChain 'Tool' object
+    assert configured_tool.name == "read_google_sheet_my_test_sheet"
+    
+    # The function within the tool should be a 'partial' function, pre-loaded with settings
+    assert isinstance(configured_tool.func, partial)
+    assert configured_tool.func.func.name == read_google_sheet.name
     
     # Verify that the settings from the database were correctly injected
-    injected_settings = configured_tool.keywords.get("settings")
+    injected_settings = configured_tool.func.keywords.get("settings")
     assert injected_settings is not None
     assert injected_settings["credentials"] == "fake_creds_12345"
     assert injected_settings["scope"] == "read_only"
@@ -136,4 +141,4 @@ async def test_components_for_generalist_agent_has_no_tools(test_organization):
 
     assert agent_name == "Generalist"
     # The generalist model should not have any tools by default
-    assert not llm.model_kwargs.get("tools")
+    assert "tools" not in llm.model_kwargs or not llm.model_kwargs["tools"]
