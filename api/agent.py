@@ -10,6 +10,7 @@ from functools import partial
 
 from api.tools.web import search_web
 from api.tools.google_sheet import read_google_sheet
+from api.tools.google_drive import read_google_drive
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
@@ -20,7 +21,8 @@ Tools = Literal[
 ]
 
 Connectors = Literal[
-    "google_sheet"
+    "google_sheet",
+    "google_drive"
 ]
 
 Models = Literal[
@@ -162,6 +164,12 @@ async def get_agent_components(
                     configured_tool = partial(read_google_sheet, settings=connector["settings"])
                     
                     configured_tool.__doc__ = read_google_sheet.__doc__
+                    
+                    active_tools.append(configured_tool)
+                case "google_drive":
+                    configured_tool = partial(read_google_drive, settings=connector["settings"])
+                    
+                    configured_tool.__doc__ = read_google_drive.__doc__
                     
                     active_tools.append(configured_tool)
                 

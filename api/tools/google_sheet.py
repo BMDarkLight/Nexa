@@ -55,4 +55,3 @@ def read_google_sheet(settings: dict, spreadsheet_id: str, range_name: str) -> s
         return f"An API error occurred: {err}"
     except Exception as e:
         return f"An unexpected error occurred: {e}"
-
