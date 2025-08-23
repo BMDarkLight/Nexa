@@ -83,7 +83,7 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            DEPLOY_DIR="/home/overall/vsp/multi/multi-team-dev-deployment"
+            DEPLOY_DIR="/home/nexa"
             mkdir -p $DEPLOY_DIR
             cd $DEPLOY_DIR
 
