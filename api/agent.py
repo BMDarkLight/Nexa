@@ -148,24 +148,23 @@ async def get_agent_components(
             )
 
     if selected_agent:
-        # 1. Start with the agent's built-in tools (e.g., web search)
         active_tools = [
             tool for tool in [
                 search_web if "search_web" in selected_agent.get("tools", []) else None,
             ] if tool is not None
         ]
 
-        # 2. Find connectors for this agent and configure their tools
         agent_connectors = list(connectors_db.find({"agent_id": selected_agent["_id"]}))
         
         for connector in agent_connectors:
-            if connector["connector_type"] == "google_sheet":
-                # Create a specialized version of the tool with its settings injected
-                configured_tool = partial(read_google_sheet, settings=connector["settings"])
+            match connector["connector_type"]:
+                case "google_sheet":
+                    configured_tool = partial(read_google_sheet, settings=connector["settings"])
+                    
+                    configured_tool.__doc__ = read_google_sheet.__doc__
+                    
+                    active_tools.append(configured_tool)
                 
-                configured_tool.__doc__ = read_google_sheet.__doc__
-                
-                active_tools.append(configured_tool)
         
         agent_llm = ChatOpenAI(
             model=selected_agent["model"],

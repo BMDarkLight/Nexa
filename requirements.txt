@@ -20,6 +20,12 @@ langsmith==0.3.45
 # Connectors
 duckduckgo_search==8.1.1
 
+google-api-core==2.25.0
+google-api-python-client==2.179.0
+google-auth==2.40.3
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.2
+
 # Email service
 resend==2.12.0
 
