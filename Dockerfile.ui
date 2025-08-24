@@ -19,7 +19,6 @@ WORKDIR /app/web
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Default port, overridden by .env (UI_PORT)
 ENV UI_PORT=8010
 
 RUN addgroup --system --gid 1001 nodejs \
@@ -31,8 +30,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/web/.next/static ./.next/static
 
 USER nextjs
 
-# Expose env-based port
 EXPOSE ${UI_PORT}
 
-# Use shell to expand env var
 CMD ["sh", "-c", "node server.js -p $UI_PORT"]
