@@ -76,20 +76,30 @@ jobs:
             echo ".env file not found"
           fi
 
+      - name: Copy docker compose file to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "backend/compose.backend.yml"
+          target: "/home/nexa/docker-compose.yml"
+
       - name: Deploy to VPS
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
+          port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+
             DEPLOY_DIR="/home/nexa"
-            mkdir -p $DEPLOY_DIR
             cd $DEPLOY_DIR
 
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-api:latest
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-ui:latest
 
             docker compose up -d --no-build
-
-            echo "Deployment successful!"
