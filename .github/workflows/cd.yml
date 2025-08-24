@@ -61,21 +61,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
-    if: always()
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Copy .env file
-        run: |
-          if [ -f .env ]; then
-            echo ".env file found"
-          else
-            echo ".env file not found"
-          fi
-
+      - uses: actions/checkout@v4
       - name: Copy docker compose file to VPS
         uses: appleboy/scp-action@v1
         with:
@@ -83,8 +72,8 @@ jobs:
           username: ${{ secrets.SSH_USERNAME }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "backend/compose.backend.yml"
-          target: "/home/nexa/docker-compose.yml"
+          source: "docker-compose.yml"
+          target: /home/nexa/
 
       - name: Deploy to VPS
         uses: appleboy/ssh-action@master
@@ -96,10 +85,9 @@ jobs:
           script: |
             docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
 
-            DEPLOY_DIR="/home/nexa"
-            cd $DEPLOY_DIR
+            cd /home/nexa
 
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-api:latest
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/nexa-ui:latest
 
-            docker compose up -d --no-build
+            docker compose --env-file /home/nexa/.env up -d --no-build
