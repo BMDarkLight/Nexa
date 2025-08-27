@@ -203,8 +203,22 @@ def signin(form_data: OAuth2PasswordRequestForm = Depends()):
 
     return {"access_token": access_token, "token_type": "bearer"}
 
+class ForgotPasswordModel(BaseModel):
+    username: str
+
+class CheckResetTokenModel(BaseModel):
+    username: str
+    token: str
+
+class ResetPasswordModel(BaseModel):
+    username: str
+    new_password: str
+    token: str
+
 @app.post("/forgot-password")
-def forgot_password(username: str):
+def forgot_password(form_data: ForgotPasswordModel):
+    username = form_data.username
+
     user = users_db.find_one({"username": username})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -226,15 +240,22 @@ def forgot_password(username: str):
     return {"message": "Password reset link sent to your email"}
 
 @app.post("/check-reset-token")
-def check_reset_token(username: str, token: str):
+def check_reset_token(form_data: CheckResetTokenModel):
+    username = form_data.username
+    token = form_data.token
+
     user = users_db.find_one({"username": username, "reset_token": token})
     if not user:
-        raise HTTPException(status_code=404, detail="Invalid credentials")
+        return {"message": "Invalid token", "valid": False}
     else:
-        return {"message": "Token is valid"}
+        return {"message": "Token is valid", "valid": True}
 
 @app.post("/reset-password")
-def reset_password(username: str, token: str, new_password: str):
+def reset_password(form_data: ResetPasswordModel):
+    username = form_data.username
+    new_password = form_data.new_password
+    token = form_data.token
+
     user = users_db.find_one({"username": username, "reset_token": token})
     if not user:
         raise HTTPException(status_code=404, detail="Invalid credentials")
