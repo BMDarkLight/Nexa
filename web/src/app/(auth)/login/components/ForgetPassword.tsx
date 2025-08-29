@@ -37,15 +37,18 @@ export default function ForgetPasswordCom() {
   } = useForm<TFormValue>({
     resolver: yupResolver(schema),
   });
-  const API_Base_Url = process.env.API_BASE_URL ?? "http://localhost:8000";
+  const API_Base_Url = process.env.API_BASE_URL ?? "http://62.60.198.4:8000";
   const End_point = "/forgot-password";
   const onSubmit = async (data: TFormValue) => {
     try {
       const loginRes = await fetch(
-        `${API_Base_Url}${End_point}?username=${data.username}`,
+        `${API_Base_Url}${End_point}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          headers: { "Content-Type": "application/json" },
+          body:JSON.stringify({
+            username: data.username
+          })
         }
       );
 
@@ -76,14 +79,14 @@ export default function ForgetPasswordCom() {
     <>
       <LoginHeader
         title="فراموشی رمز عبور"
-        subTitle="ایمیل خود را وارد کنید"
+        subTitle="نام کاربری خود را وارد کنید"
         headerLink=""
       />
       <form onSubmit={handleSubmit(onSubmit)}>
         <div className="flex flex-col gap-6">
           <div className="grid gap-3">
             <Label htmlFor="email">
-              ایمیل<span className="text-[#EF4444]">*</span>
+              نام کاربری<span className="text-[#EF4444]">*</span>
             </Label>
             <Input
               id="email"

@@ -1,3 +1,4 @@
+"use client"
 import React from "react";
 import {
   Card,
@@ -14,10 +15,64 @@ import { Bot, EllipsisVertical, Plus, Trash2 } from "lucide-react";
 import {Tooltip , TooltipContent , TooltipProvider , TooltipTrigger} from "@/components/ui/tooltip";
 import DeleteAgent from "./DeleteAgent";
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import Cookie from "js-cookie";
 const tooltipIcon = [{
       name:"Figma" , src: "/Squad/image/figma.png"
 } , { name:"Google Drive" , src:"/Squad/image/goole-drive.png"} , {name:"Notion" , src:"/Squad/image/notion.png"} , {name:"Temple" , src:"/Squad/image/temple.png"}]
+interface Agents{
+  _id: string;
+  name: string;
+  description: string;
+  org: string;
+  model: string;
+  temperature: number;
+  tools: string[];
+  created_at: string;
+  updated_at: string;
+}
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
+const End_point = "/agents";
 export default function AgentCard(){
+       const [agents, setAgents] = useState<Agents[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchAgents() {
+      try {
+        const token = Cookie.get("auth_token");
+        const tokenType = Cookie.get("token_type");
+        console.log(token);
+        
+        if (!token || !tokenType) {
+          console.warn("No token found in cookies");
+          setLoading(false);
+          return;
+        }
+
+        const res = await fetch(`${API_Base_Url}${End_point}`, {
+          headers: {
+            Authorization: `${tokenType} ${token}`,
+          },
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          setAgents(data);
+          console.log(data);
+          
+        } else {
+          console.error("API Error:", data);
+        }
+      } catch (err) {
+        console.error("Fetch failed:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchAgents();
+  }, []);
       return(
             <>
              <div className="flex flex-col gap-5 lg:px-10">

@@ -40,10 +40,15 @@ export default function ResetPasswordCom() {
   async function onSubmit(data: FormValues) {
     try {
       const respond = await fetch(
-        `${API_Base_Url}${End_point}?token=${token}&username=${username}&new_password=${password}`,
+        `${API_Base_Url}${End_point}`,
         {
           method: "POST",
-          headers: { "Content-type": "x-www-form-urlencoded" },
+          headers: { "Content-type": "application/json" },
+          body: JSON.stringify({
+            username: username , 
+            token: token ,
+            new_password: data.password
+          })
         }
       );
 

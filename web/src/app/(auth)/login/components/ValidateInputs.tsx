@@ -27,7 +27,7 @@ interface IUserData {
 const API_SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ;
 console.log("this is server url"  , API_SERVER_URL);
 
-const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:8000";
+const API_Base_Url = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://62.60.198.4:8000";
 const End_point = "/signin";
 
 export type TFormValue = {
@@ -94,10 +94,10 @@ export default function ValidateInputs() {
         expires: 7,
         secure: process.env.NODE_ENV === "production", 
       });
-      // Cookie.set("token_type", token_type, {
-      //   expires: 7,
-      //   secure: process.env.NODE_ENV === "production",
-      // });
+      Cookie.set("token_type", token_type, {
+        expires: 7,
+        secure: process.env.NODE_ENV === "production",
+      });
 
       Swal.fire({ icon: "success", title: "موفق", text: "ورود موفقیت‌آمیز!" });
       reset();
