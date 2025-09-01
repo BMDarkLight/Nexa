@@ -59,7 +59,7 @@ export default function AgentCard(){
         const data = await res.json();
         if (res.ok) {
           setAgents(data);
-          console.log(data);
+          console.log("this is agents lists" ,data);
           
         } else {
           console.error("API Error:", data);

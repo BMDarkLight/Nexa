@@ -171,5 +171,33 @@
       "organization": "string",
       "plan": "free"
     }
+  ],
+  "agents": [
+    {
+      "_id": "",
+      "name": "",
+      "description": "",
+      "org": "",
+      "model": "",
+      "temperature": 0.7,
+      "tools": [
+        "search_web"
+      ],
+      "created_at": "",
+      "updated_at": ""
+    },
+    {
+      "id": "2a96",
+      "name": "mostafa",
+      "description": "",
+      "model": "gpt-3.5-turbo",
+      "temperature": 0.7,
+      "tools": [
+        "سرچ",
+        "ماشین حساب",
+        "حافظه",
+        "مرورگر"
+      ]
+    }
   ]
 }

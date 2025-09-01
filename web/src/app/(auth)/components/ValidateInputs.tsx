@@ -8,11 +8,8 @@ import LoginHeader from "./LoginHeader";
 import { useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
-import axios from "axios";
 import Cookie from "js-cookie";
 import Swal from "sweetalert2";
-// import dotenv from "dotenv";
-// dotenv.config()
 interface IUserData {
   username: string;
   password: string;
@@ -141,7 +138,7 @@ export default function ValidateInputs() {
                   رمز عبور<span className="text-[#EF4444]">*</span>
                 </Label>
                 <Link
-                  href="/login/forget-password"
+                  href="/forget-password"
                   className="text-sm hover:underline transition duration-500"
                 >
                   رمز عبورتان را فراموش کردید؟
