@@ -1,39 +1,71 @@
 import os
-from dotenv import load_dotenv, find_dotenv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from ssl import create_default_context
+from dotenv import load_dotenv, find_dotenv
 
 load_dotenv(dotenv_path=find_dotenv())
 
 use_smtp = os.getenv("USE_SMTP", "false").lower() == "true"
 
 if use_smtp:
-    import smtplib
-    from email.mime.text import MIMEText
-
-    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.example.com")
+    # --- SMTP Configuration ---
+    SMTP_SERVER = os.getenv("SMTP_SERVER")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-    SMTP_USERNAME = os.getenv("SMTP_USERNAME", "admin")
-    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "password")
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+    SMTP_SENDER = os.getenv("SMTP_SENDER")
 
-def send_email(to_address, subject, body):
-     try:
-        context = create_default_context()
+    if not all([SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER]):
+        raise ConnectionError(
+            "SMTP is enabled, but one or more required environment variables are missing: "
+            "SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER"
+        )
 
-        with smtplib.SMTP_SSL(
-            os.getenv("MAIL_HOST"), os.getenv("MAIL_PORT"), context=context
-        ) as server:
-            server.login(os.getenv("MAIL_USER"), os.getenv("MAIL_PASSWORD"))
-
+    def send_email(to_email: str, subject: str, html_body: str):
+        try:
             msg = MIMEMultipart()
-            msg["From"] = f"<{os.getenv("MAIL_FROM_ADDRESS")}>"
-            msg["To"] = to_address
+            msg["From"] = SMTP_SENDER
+            msg["To"] = to_email
             msg["Subject"] = subject
-            msg.attach(MIMEText(body, "html"))
+            msg.attach(MIMEText(html_body, "html"))
 
-            server.sendmail(os.getenv("MAIL_FROM_ADDRESS"), to_address, msg.as_string())
-            print(f"Email sent to {to_address} successfully!")
-     except Exception as e:
-        print(f"Failed to send email: {e}")
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+                server.starttls()
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.sendmail(SMTP_SENDER, to_email, msg.as_string())
+                print(f"SMTP email sent to {to_email} successfully!")
+        
+        except smtplib.SMTPAuthenticationError as e:
+            print(f"Failed to send SMTP email: Authentication failed. Please check your credentials. Error: {e}")
+            raise
+        except Exception as e:
+            print(f"Failed to send SMTP email: {e}")
+            raise
+
+else:
+    # --- Resend Configuration ---
+    import resend
+
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+    RESEND_SENDER = os.getenv("RESEND_SENDER", "Nexa <onboarding@resend.dev>")
+    
+    if not RESEND_API_KEY:
+         raise ConnectionError("USE_SMTP is false, but RESEND_API_KEY is not set.")
+
+    resend.api_key = RESEND_API_KEY
+
+    def send_email(to_email: str, subject: str, html_body: str):
+        try:
+            params: resend.Emails.SendParams = {
+                "from": RESEND_SENDER,
+                "to": [to_email],
+                "subject": subject,
+                "html": html_body,
+            }
+            email = resend.Emails.send(params)
+            print(f"Resend email sent to {to_email} successfully! ID: {email.get('id')}")
+            return email
+        except Exception as e:
+            print(f"Failed to send email to {to_email} via Resend: {e}")
+            raise
