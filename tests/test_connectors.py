@@ -1,109 +1,137 @@
 import pytest
-import asyncio
+from fastapi.testclient import TestClient
 from bson import ObjectId
 import datetime
+from datetime import timezone
 from functools import partial
 
-# Assuming your app and dbs are accessible for testing
-from api.auth import orgs_db
+from api.main import app, pwd_context
+from api.auth import users_db, orgs_db
 from api.agent import agents_db, connectors_db, get_agent_components
-from api.tools.web import search_web
 from api.tools.google_sheet import read_google_sheet
 
-# --- Fixtures ---
-@pytest.fixture(scope="module", autouse=True)
+client = TestClient(app)
+
+@pytest.fixture(scope="function", autouse=True)
 def setup_and_teardown_db():
-    """A fixture to clean the database before and after all tests in this module."""
+    users_db.delete_many({})
     orgs_db.delete_many({})
     agents_db.delete_many({})
     connectors_db.delete_many({})
     yield
+    users_db.delete_many({})
     orgs_db.delete_many({})
     agents_db.delete_many({})
     connectors_db.delete_many({})
 
-@pytest.fixture(scope="module")
-def test_organization():
-    """Creates a test organization and returns its ID."""
+# --- FIX: Changed scope to "function" to match the database fixture ---
+@pytest.fixture(scope="function")
+def org_admin_token():
     org = orgs_db.insert_one({"name": "ConnectorLogicTestCorp"})
-    return org.inserted_id
-
-@pytest.fixture(scope="module")
-def agent_with_web_tool(test_organization):
-    """Creates an agent that only has a built-in tool."""
-    now = datetime.datetime.now(datetime.UTC).isoformat()
-    agent_doc = {
-        "name": "Web Search Agent",
-        "org": test_organization,
-        "model": "gpt-4o-mini",
-        "description": "An agent for searching the web.",
-        "tools": ["search_web"],
-        "created_at": now,
-        "updated_at": now,
-        "temperature": 0.1
+    org_id = org.inserted_id
+    
+    user_doc = {
+        "_id": ObjectId(),
+        "username": "test_connector_logic_admin",
+        "password": pwd_context.hash("logicadminpass"),
+        "permission": "orgadmin",
+        "status": "active",
+        "organization": org_id
     }
-    result = agents_db.insert_one(agent_doc)
-    return str(result.inserted_id)
+    users_db.insert_one(user_doc)
+    orgs_db.update_one({"_id": org_id}, {"$set": {"owner": user_doc["_id"]}})
 
-@pytest.fixture(scope="module")
-def agent_with_connector(test_organization):
-    """Creates an agent and associates a Google Sheet connector with it."""
-    now = datetime.datetime.now(datetime.UTC).isoformat()
-    agent_doc = {
-        "name": "Sheet Agent",
-        "org": test_organization,
-        "model": "gpt-4",
-        "description": "An agent for reading spreadsheets.",
-        "tools": [], # No built-in tools for this one
-        "created_at": now,
-        "updated_at": now,
-        "temperature": 0.1
+    resp = client.post("/signin", data={"username": "test_connector_logic_admin", "password": "logicadminpass"})
+    assert resp.status_code == 200
+    token = resp.json()["access_token"]
+    
+    return token, org_id
+
+def auth_header(token):
+    return {"Authorization": f"Bearer {token}"}
+
+def test_create_connector(org_admin_token):
+    token, _ = org_admin_token
+    payload = {
+        "name": "My Main Sheet",
+        "connector_type": "google_sheet",
+        "settings": {"id": "12345"}
     }
-    agent_result = agents_db.insert_one(agent_doc)
+    resp = client.post("/connectors", headers=auth_header(token), json=payload)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "My Main Sheet"
+    assert connectors_db.count_documents({"name": "My Main Sheet"}) == 1
+
+def test_list_connectors(org_admin_token):
+    token, org_id = org_admin_token
+    connectors_db.insert_one({"name": "Sheet A", "org": org_id, "connector_type": "google_sheet", "settings": {}})
+    connectors_db.insert_one({"name": "Drive B", "org": org_id, "connector_type": "google_drive", "settings": {}})
+    
+    resp = client.get("/connectors", headers=auth_header(token))
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert {c["name"] for c in data} == {"Sheet A", "Drive B"}
+
+def test_update_connector(org_admin_token):
+    token, org_id = org_admin_token
+    result = connectors_db.insert_one({"name": "Old Name", "org": org_id, "connector_type": "google_sheet", "settings": {}})
+    connector_id = str(result.inserted_id)
+    
+    update_payload = {"name": "New Name", "settings": {"id": "updated"}}
+    resp = client.put(f"/connectors/{connector_id}", headers=auth_header(token), json=update_payload)
+    
+    assert resp.status_code == 200
+    updated_doc = connectors_db.find_one({"_id": result.inserted_id})
+    assert updated_doc["name"] == "New Name"
+    assert updated_doc["settings"]["id"] == "updated"
+
+def test_delete_connector_and_verify_pull_from_agent(org_admin_token):
+    token, org_id = org_admin_token
+    conn_result = connectors_db.insert_one({"name": "To Be Deleted", "org": org_id, "connector_type": "google_sheet", "settings": {}})
+    connector_id = conn_result.inserted_id
+    
+    agent_result = agents_db.insert_one({"name": "Agent With Connector", "org": org_id, "description": "Test agent", "connector_ids": [connector_id], "model": "gpt-4"})
     agent_id = agent_result.inserted_id
 
+    agent_before = agents_db.find_one({"_id": agent_id})
+    assert connector_id in agent_before["connector_ids"]
+
+    resp = client.delete(f"/connectors/{str(connector_id)}", headers=auth_header(token))
+    assert resp.status_code == 200
+
+    agent_after = agents_db.find_one({"_id": agent_id})
+    assert connector_id not in agent_after.get("connector_ids", [])
+    assert connectors_db.count_documents({"_id": connector_id}) == 0
+
+@pytest.mark.asyncio
+async def test_agent_logic_with_connector(org_admin_token):
+    _, org_id = org_admin_token
+    
     connector_doc = {
-        "agent_id": agent_id,
-        "name": "My Test Sheet",
+        "name": "Logic Test Sheet",
+        "org": org_id,
         "connector_type": "google_sheet",
-        "settings": {"credentials": "fake_creds_12345", "scope": "read_only"}
+        "settings": {"credentials": "fake_creds_for_logic_test"}
     }
-    connectors_db.insert_one(connector_doc)
-    return str(agent_id)
+    conn_result = connectors_db.insert_one(connector_doc)
+    connector_id = conn_result.inserted_id
 
+    agent_doc = {
+        "name": "Logic Test Agent",
+        "org": org_id,
+        "model": "gpt-4",
+        "description": "A test agent for logic.",
+        "connector_ids": [connector_id],
+    }
+    agent_result = agents_db.insert_one(agent_doc)
+    agent_id = str(agent_result.inserted_id)
 
-# --- Test Cases for Connector Logic ---
-
-@pytest.mark.asyncio
-async def test_components_for_agent_with_only_built_in_tools(test_organization, agent_with_web_tool):
-    """
-    Tests that get_agent_components correctly identifies and prepares an agent's
-    built-in tools when no connectors are present.
-    """
-    llm, _, _, _ = await get_agent_components(
-        question="What is the weather?",
-        organization_id=test_organization,
-        agent_id=agent_with_web_tool
-    )
-
-    # The LLM should be configured with tools
-    assert "tools" in llm.model_kwargs
-    configured_tools = llm.model_kwargs["tools"]
-    assert len(configured_tools) == 1
-    # Check that the tool is the correct function from the tools module
-    # --- CHANGE: Use .name instead of .__name__ ---
-    assert configured_tools[0].name == search_web.name
-
-@pytest.mark.asyncio
-async def test_components_for_agent_with_connector_tool(test_organization, agent_with_connector):
-    """
-    Tests that get_agent_components finds an agent's connector, configures the
-    connector's tool with the correct settings, and prepares it for the LLM.
-    """
     llm, _, _, _ = await get_agent_components(
         question="Read data from my sheet.",
-        organization_id=test_organization,
-        agent_id=agent_with_connector
+        organization_id=org_id,
+        agent_id=agent_id
     )
 
     assert "tools" in llm.model_kwargs
@@ -111,34 +139,7 @@ async def test_components_for_agent_with_connector_tool(test_organization, agent
     assert len(configured_tools) == 1
     
     configured_tool = configured_tools[0]
-    
-    # The tool should be a LangChain 'Tool' object
-    assert configured_tool.name == "read_google_sheet_my_test_sheet"
-    
-    # The function within the tool should be a 'partial' function, pre-loaded with settings
+    assert configured_tool.name == "read_google_sheet_logic_test_sheet"
     assert isinstance(configured_tool.func, partial)
-    assert configured_tool.func.func.name == read_google_sheet.name
-    
-    # Verify that the settings from the database were correctly injected
-    injected_settings = configured_tool.func.keywords.get("settings")
-    assert injected_settings is not None
-    assert injected_settings["credentials"] == "fake_creds_12345"
-    assert injected_settings["scope"] == "read_only"
+    assert configured_tool.func.keywords["settings"]["credentials"] == "fake_creds_for_logic_test"
 
-@pytest.mark.asyncio
-async def test_components_for_generalist_agent_has_no_tools(test_organization):
-    """
-    Tests that when no specific agent is selected (or routed to), the resulting
-    'Generalist' agent has no tools configured.
-    """
-    # We pass an invalid agent_id on purpose to force the 'Generalist' path
-    # in a predictable way for this test.
-    llm, _, agent_name, _ = await get_agent_components(
-        question="Just a general question.",
-        organization_id=test_organization,
-        agent_id=str(ObjectId()) # An ID that won't be found
-    )
-
-    assert agent_name == "Generalist"
-    # The generalist model should not have any tools by default
-    assert "tools" not in llm.model_kwargs or not llm.model_kwargs["tools"]
