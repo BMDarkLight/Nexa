@@ -9,8 +9,8 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 from bson import ObjectId
 
-from api.auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
-from api.mail import send_email
+from auth import create_access_token, verify_token, prospective_users_db, users_db, orgs_db
+from mail import send_email
 
 import datetime
 import secrets
@@ -120,7 +120,7 @@ async def main_page():
 # --- Embedded Login Page ---
 @app.get("/login", response_class=HTMLResponse)
 def login():
-    with open("api/pages/login.html", "r", encoding="utf-8") as f:
+    with open("pages/login.html", "r", encoding="utf-8") as f:
         html_content = f.read()
 
     return HTMLResponse(content=html_content)
@@ -230,7 +230,7 @@ def forgot_password(form_data: ForgotPasswordModel):
     
     if user["email"]:
         send_email(
-            to=user["email"],
+            to_address=user["email"],
             subject="Password Reset Request",
             body=f"Click the link to reset your password: {reset_link}"
         )
@@ -591,7 +591,7 @@ def delete_user(username: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"User '{username}' deleted successfully"}
 
 # --- Agent Routes ---
-from api.agent import get_agent_components, sessions_db, agents_db, connectors_db
+from agent import get_agent_components, sessions_db, agents_db, connectors_db
 from langchain.schema import HumanMessage
 import uuid
 
@@ -906,7 +906,7 @@ def delete_session(session_id: str, token: str = Depends(oauth2_scheme)):
     return {"message": f"Session '{session_id}' deleted successfully"}
 
 # --- Agent Management Routes ---
-from api.agent import Agent, AgentCreate, AgentUpdate, Connector, ConnectorCreate, ConnectorUpdate
+from agent import Agent, AgentCreate, AgentUpdate, Connector, ConnectorCreate, ConnectorUpdate
 
 @app.get("/agents", response_model=List[Agent])
 def list_agents(token: str = Depends(oauth2_scheme)):
