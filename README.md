@@ -46,7 +46,7 @@ The backend handles authentication, user management, invitations, organizations,
 ### Prerequisites
 
 - Docker and Docker Compose installed
-- An `.env` file created based on `.env.example` with your environment variables, including keys like:
+- An `.env` file created based on `.env.local` with your environment variables, including keys like:
 
 ```env
 SYSADMIN_USERNAME=admin
