@@ -230,7 +230,7 @@ def forgot_password(form_data: ForgotPasswordModel):
     
     if user["email"]:
         send_email(
-            to_address=user["email"],
+            to_email=user["email"],
             subject="Password Reset Request",
             body=f"Click the link to reset your password: {reset_link}"
         )
@@ -447,7 +447,7 @@ def invite_user(username: str, email: str, token: str = Depends(oauth2_scheme)):
     })
 
     send_email(
-        to=email,
+        to_email=email,
         subject="Invitation to Join Organization",
         body=(
             f"You have been invited to join the organization '{organization['name']}'. "
@@ -508,13 +508,13 @@ def invite_signin(
 
     if orgadmin and orgadmin.get("email"):
         send_email(
-            to=orgadmin["email"],
+            to_email=orgadmin["email"],
             subject=f"Invited user {username} has signed up, Please approve them.",
             body=f"The user '{username}' has signed up with the organization '{user['organization']}'."
         )
 
         send_email(
-            to=user["email"],
+            to_email=user["email"],
             subject=f"Welcome to the Organization {user['organization']}",
             body=f"Your account has been signed up {form_data.firstname}!"
         )

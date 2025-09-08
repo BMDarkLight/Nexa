@@ -22,13 +22,13 @@ if use_smtp:
             "SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER"
         )
 
-    def send_email(to_email: str, subject: str, html_body: str):
+    def send_email(to_email: str, subject: str, body: str):
         try:
             msg = MIMEMultipart()
             msg["From"] = SMTP_SENDER
             msg["To"] = to_email
             msg["Subject"] = subject
-            msg.attach(MIMEText(html_body, "html"))
+            msg.attach(MIMEText(body, "html"))
 
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
                 server.starttls()
