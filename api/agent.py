@@ -67,7 +67,7 @@ class Connector(BaseModel):
     name: str = Field(...)
     connector_type: Connectors = Field(..., alias="connector_type")
     settings: Dict[str, Any]
-    agent_id: PyObjectId = Field(..., alias="agent_id")
+    org: PyObjectId
 
 class ConnectorCreate(BaseModel):
     name: str = Field(...)
@@ -87,6 +87,7 @@ class Agent(BaseModel):
     model: Models
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     tools: list[Tools]
+    connector_ids: List[PyObjectId] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
@@ -96,6 +97,7 @@ class AgentCreate(BaseModel):
     model: Models
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     tools: List[Tools] = []
+    connector_ids: List[PyObjectId] = Field(default_factory=list)
 
 class AgentUpdate(BaseModel):
     name: Optional[str] = None
@@ -103,6 +105,7 @@ class AgentUpdate(BaseModel):
     model: Optional[Models] = None
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     tools: Optional[List[Tools]] = None
+    connector_ids: Optional[List[PyObjectId]] = None
 
 class ChatHistoryEntry(TypedDict):
     user: str
@@ -165,7 +168,11 @@ async def get_agent_components(
             ] if tool is not None
         ]
 
-        agent_connectors = list(connectors_db.find({"agent_id": selected_agent["_id"]}))
+        connector_ids = selected_agent.get("connector_ids", [])
+        if connector_ids:
+            agent_connectors = list(connectors_db.find({"_id": {"$in": connector_ids}}))
+        else:
+            agent_connectors = []
         
         tool_function_map = {
             "google_sheet": read_google_sheet,
@@ -231,3 +238,4 @@ async def get_agent_components(
         final_agent_name,
         str(final_agent_id) if final_agent_id else None,
     )
+

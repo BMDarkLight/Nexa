@@ -20,24 +20,19 @@ if use_smtp:
 
 def send_email(to_address, subject, body):
      try:
-        # Enforce TLS
         context = create_default_context()
 
-        # Connect to the server
         with smtplib.SMTP_SSL(
             os.getenv("MAIL_HOST"), os.getenv("MAIL_PORT"), context=context
         ) as server:
             server.login(os.getenv("MAIL_USER"), os.getenv("MAIL_PASSWORD"))
 
-            # Prepare the email
             msg = MIMEMultipart()
             msg["From"] = f"<{os.getenv("MAIL_FROM_ADDRESS")}>"
             msg["To"] = to_address
             msg["Subject"] = subject
-            # msg.add_header('x-liara-tag', 'test-tag')  # Add custom header
             msg.attach(MIMEText(body, "html"))
 
-            # Send the email
             server.sendmail(os.getenv("MAIL_FROM_ADDRESS"), to_address, msg.as_string())
             print(f"Email sent to {to_address} successfully!")
      except Exception as e:
