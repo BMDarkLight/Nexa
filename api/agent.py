@@ -10,9 +10,9 @@ import os
 import re
 from functools import partial
 
-from tools.web import search_web
-from tools.google_sheet import read_google_sheet
-from tools.google_drive import read_google_drive
+from api.tools.web import search_web
+from api.tools.google_sheet import read_google_sheet
+from api.tools.google_drive import read_google_drive
 
 sessions_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.sessions
 agents_db = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/")).nexa.agents
