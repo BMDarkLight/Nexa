@@ -216,9 +216,8 @@ class ResetPasswordModel(BaseModel):
     token: str
 
 @app.post("/forgot-password")
-def forgot_password(form_data: ForgotPasswordModel):
+def forgot_password(form_data: ForgotPasswordModel, background_tasks: BackgroundTasks):
     username = form_data.username
-
     user = users_db.find_one({"username": username})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -229,10 +228,11 @@ def forgot_password(form_data: ForgotPasswordModel):
     reset_link = f"{SERVER_URL}:{UI_PORT}/login/reset-password?token={reset_token}&username={username}"
     
     if user["email"]:
-        send_email(
+        background_tasks.add_task(
+            send_email,
             to_email=user["email"],
             subject="Password Reset Request",
-            body=f"Click the link to reset your password: {reset_link}"
+            html_body=f"Click the link to reset your password: {reset_link}"
         )
     else:
         raise HTTPException(status_code=400, detail="User does not have an email set")
@@ -243,7 +243,6 @@ def forgot_password(form_data: ForgotPasswordModel):
 def check_reset_token(form_data: CheckResetTokenModel):
     username = form_data.username
     token = form_data.token
-
     user = users_db.find_one({"username": username, "reset_token": token})
     if not user:
         return {"message": "Invalid token", "valid": False}
@@ -255,7 +254,6 @@ def reset_password(form_data: ResetPasswordModel):
     username = form_data.username
     new_password = form_data.new_password
     token = form_data.token
-
     user = users_db.find_one({"username": username, "reset_token": token})
     if not user:
         raise HTTPException(status_code=404, detail="Invalid credentials")
@@ -267,7 +265,7 @@ def reset_password(form_data: ResetPasswordModel):
             "$set": {
                 "password": hashed_password,
                 "reset_token": None,
-                "updated_at": datetime.datetime.utcnow()
+                "updated_at": datetime.datetime.now(datetime.UTC)
             }
         }
     )
@@ -415,7 +413,7 @@ def get_organization(name: str, token: str = Depends(oauth2_scheme)):
 
 # --- Organization User Routes ---
 @app.post("/invite/{username}")
-def invite_user(username: str, email: str, token: str = Depends(oauth2_scheme)):
+def invite_user(username: str, email: str,  background_tasks: BackgroundTasks = None, token: str = Depends(oauth2_scheme)):
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
@@ -446,10 +444,11 @@ def invite_user(username: str, email: str, token: str = Depends(oauth2_scheme)):
         "updated_at": datetime.datetime.utcnow()
     })
 
-    send_email(
+    background_tasks.add_task(
+        send_email,
         to_email=email,
         subject="Invitation to Join Organization",
-        body=(
+        html_body=(
             f"You have been invited to join the organization '{organization['name']}'. "
             f"Use the following invitation code to complete your signup:\n\n{invite_code}"
         )
@@ -467,7 +466,8 @@ class InviteSignupModel(BaseModel):
 
 @app.post("/invite/signup/{username}")
 def invite_signin(
-    form_data: InviteSignupModel
+    form_data: InviteSignupModel,
+    background_tasks: BackgroundTasks
 ):
     user = users_db.find_one({"invite_code": form_data.invite_code})
     if not user:
@@ -507,16 +507,18 @@ def invite_signin(
     })
 
     if orgadmin and orgadmin.get("email"):
-        send_email(
+        background_tasks.add_task(
+            send_email,
             to_email=orgadmin["email"],
-            subject=f"Invited user {username} has signed up, Please approve them.",
-            body=f"The user '{username}' has signed up with the organization '{user['organization']}'."
+            subject=f"Invited user {user['username']} has signed up.",
+            html_body=f"The user '{user['username']}' has completed their signup for the organization '{organization['name']}'."
         )
 
-        send_email(
+        background_tasks.add_task(
+            send_email,
             to_email=user["email"],
-            subject=f"Welcome to the Organization {user['organization']}",
-            body=f"Your account has been signed up {form_data.firstname}!"
+            subject=f"Welcome to {organization['name']}",
+            html_body=f"Your account has been successfully created, {form_data.firstname}!"
         )
 
     return {"message": "Invited user signed up successfully."}
