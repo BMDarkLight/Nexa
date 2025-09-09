@@ -17,7 +17,7 @@ use_smtp = os.getenv("USE_SMTP", "true").lower() == "true"
 if use_smtp:
     # --- SMTP Configuration ---
     SMTP_SERVER = os.getenv("SMTP_SERVER")
-    SMTP_PORT = int(os.getenv("SMTP_PORT"))
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 465))
     SMTP_USERNAME = os.getenv("SMTP_USERNAME")
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
     SMTP_SENDER = os.getenv("SMTP_SENDER")
