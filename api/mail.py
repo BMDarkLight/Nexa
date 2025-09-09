@@ -5,18 +5,19 @@ import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv, find_dotenv
+from ssl import create_default_context
 
 # --- Setup ---
 load_dotenv(dotenv_path=find_dotenv())
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-use_smtp = os.getenv("USE_SMTP", "false").lower() == "true"
+use_smtp = os.getenv("USE_SMTP", "true").lower() == "true"
 
 if use_smtp:
     # --- SMTP Configuration ---
     SMTP_SERVER = os.getenv("SMTP_SERVER")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+    SMTP_PORT = int(os.getenv("SMTP_PORT"))
     SMTP_USERNAME = os.getenv("SMTP_USERNAME")
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
     SMTP_SENDER = os.getenv("SMTP_SENDER")
@@ -27,33 +28,31 @@ if use_smtp:
             "SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_SENDER"
         )
 
-    def send_email(to_email: str, subject: str, html_body: str):
-        try:
+
+    def send_email(to_email, subject, html_body):
+     try:
+        # Enforce TLS
+        context = create_default_context()
+
+        # Connect to the server
+        with smtplib.SMTP_SSL(
+            os.getenv("MAIL_HOST"), os.getenv("MAIL_PORT"), context=context
+        ) as server:
+            server.login(os.getenv("MAIL_USER"), os.getenv("MAIL_PASSWORD"))
+
+            # Prepare the email
             msg = MIMEMultipart()
-            msg["From"] = SMTP_SENDER
+            msg["From"] = f"<{os.getenv("MAIL_FROM_ADDRESS")}>"
             msg["To"] = to_email
             msg["Subject"] = subject
+            # msg.add_header('x-liara-tag', 'test-tag')  # Add custom header
             msg.attach(MIMEText(html_body, "html"))
 
-            # --- FIX: Added a timeout to prevent hanging ---
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
-                server.starttls()
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(SMTP_SENDER, to_email, msg.as_string())
-                logger.info(f"SMTP email sent to {to_email} successfully!")
-        
-        except smtplib.SMTPAuthenticationError as e:
-            logger.error(f"SMTP Authentication failed. Please check credentials. Error: {e}")
-            raise
-        except socket.gaierror as e:
-            logger.error(f"SMTP DNS resolution failed. Check the SMTP_SERVER address. Error: {e}")
-            raise
-        except TimeoutError:
-            logger.error("SMTP connection timed out after 10 seconds. Check server and port.")
-            raise
-        except Exception as e:
-            logger.error(f"An unexpected error occurred while sending SMTP email: {e}")
-            raise
+            # Send the email
+            server.sendmail(os.getenv("MAIL_FROM_ADDRESS"), to_email, msg.as_string())
+            print(f"Email sent to {to_email} successfully!")
+     except Exception as e:
+        print(f"Failed to send email: {e}")
 
 else:
     # --- Resend Configuration ---
